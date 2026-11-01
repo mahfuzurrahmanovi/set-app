@@ -45,7 +45,7 @@ SCOPES = (
     "read_products,write_products,read_content,write_content,"
     "read_product_listings,write_product_listings"
 )
-REQUIRED_SCOPES = set(SCOPES.split(","))
+REQUIRED_SCOPES = {"write_products", "write_content", "write_product_listings"}  # write implies read in Shopify
 
 API_VERSION = "2025-07"
 

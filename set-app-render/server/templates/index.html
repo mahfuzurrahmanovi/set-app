@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set App</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #f6f6f6; }
+  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 28px; }
+  input, button { font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; box-sizing: border-box; }
+  button { background: #0f766e; color: #fff; border: none; margin-top: 10px; }
+  button.secondary { background: #fff; color: #111; border: 1px solid #ccc; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; }
+  label { display: block; margin-top: 12px; font-weight: 600; }
+  input[type=range] { padding: 0; }
+  img.preview { width: 100%; border-radius: 12px; margin-top: 12px; }
+  .row { display: flex; gap: 10px; } .row > * { flex: 1; }
+  small { color: #555; }
+</style>
+</head>
+<body>
+<h1>Set App</h1>
+<p><small>Build sets, place one design, publish to the whole set. Phone friendly.</small></p>
+
+<div class="card">
+  <h2>1. New set</h2>
+  <input id="setName" placeholder="Set name, e.g. Oregon Ducks Set">
+  <button onclick="createSet()">Create set</button>
+  <div id="sets"></div>
+</div>
+
+<div class="card">
+  <h2>2. Upload design</h2>
+  <input type="file" id="designFile" accept="image/*" multiple>
+  <button onclick="uploadDesign()">Upload</button>
+  <div id="uploadResult"></div>
+</div>
+
+<div class="card">
+  <h2>3. Master placement</h2>
+  <p><small>Place once on the first product. Every locked product follows this.</small></p>
+  <label>Left / right <span id="xVal">0.50</span></label>
+  <input type="range" id="x" min="0" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <label>Up / down <span id="yVal">0.45</span></label>
+  <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
+  <label>Size <span id="sVal">0.50</span></label>
+  <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <button onclick="saveMaster()">Save master placement</button>
+  <div id="masterResult"></div>
+</div>
+
+<div class="card">
+  <h2>4. Products in this set</h2>
+  <p><small>Unlock a product to adjust it alone. Lock it again to return to the master.</small></p>
+  <div id="products"><small>No set selected yet. Create a set first.</small></div>
+</div>
+
+<script>
+let currentSet = null;
+function showVals() {
+  document.getElementById('xVal').textContent = (+document.getElementById('x').value).toFixed(2);
+  document.getElementById('yVal').textContent = (+document.getElementById('y').value).toFixed(2);
+  document.getElementById('sVal').textContent = (+document.getElementById('s').value).toFixed(2);
+}
+async function createSet() {
+  const name = document.getElementById('setName').value.trim();
+  if (!name) return alert('Type a set name first.');
+  const r = await fetch('/api/sets', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+  currentSet = await r.json();
+  document.getElementById('sets').innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
+  document.getElementById('products').innerHTML = '<small>Add products from the Shopify side, then unlock any product here to adjust it alone.</small>';
+}
+async function uploadDesign() {
+  if (!currentSet) return alert('Create a set first.');
+  const files = document.getElementById('designFile').files;
+  if (!files.length) return alert('Choose a design file first.');
+  const fd = new FormData(); fd.append('design', files[0]);
+  const r = await fetch('/api/sets/' + currentSet.id + '/upload', { method: 'POST', body: fd });
+  const j = await r.json();
+  document.getElementById('uploadResult').innerHTML = '<p>Uploaded. Saved at ' + j.url + '</p>';
+}
+async function saveMaster() {
+  if (!currentSet) return alert('Create a set first.');
+  const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: 0 };
+  const r = await fetch('/api/sets/' + currentSet.id + '/master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ placement }) });
+  currentSet = await r.json();
+  document.getElementById('masterResult').innerHTML = '<p>Master saved. Every locked product now follows it.</p>';
+}
+showVals();
+</script>
+</body>
+</html>

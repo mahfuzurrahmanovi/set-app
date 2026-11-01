@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: set-app
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server/app.py
+    envVars:
+      - key: SHOPIFY_SHOP_DOMAIN
+        value: b2uus8-mt.myshopify.com
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
+        sync: false
+      - key: APP_PUBLIC_URL
+        sync: false

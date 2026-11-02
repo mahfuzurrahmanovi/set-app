@@ -314,6 +314,39 @@ def search_products(query, limit=20):
     return results
 
 
+def get_product_image(product_id):
+    """Featured image URL for one Shopify product, or None.
+
+    GraphQL lookup by product id (same pattern as search_products).
+    Returns ONLY the image URL. Raises RuntimeError when Shopify is
+    not authenticated or the lookup fails; the caller turns that into
+    an honest "no photo" answer, never a fabricated image.
+    """
+    pid = re.sub(r"\D", "", str(product_id or ""))
+    if not pid:
+        return None
+    gql = """
+      query ($id: ID!) {
+        product(id: $id) { featuredImage { url } }
+      }
+    """
+    r = requests.post(
+        _api("/graphql.json"),
+        headers=_headers(),
+        json={"query": gql,
+              "variables": {"id": f"gid://shopify/Product/{pid}"}},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Shopify product lookup failed (HTTP {r.status_code})")
+    data = r.json()
+    if data.get("errors"):
+        raise RuntimeError("Shopify product lookup failed")
+    node = (data.get("data") or {}).get("product") or {}
+    return (node.get("featuredImage") or {}).get("url")
+
+
 def create_draft_product(title, description="", tags=None, options=None,
                          variants=None, images=None):
     """Create a product in DRAFT status only. Never live.

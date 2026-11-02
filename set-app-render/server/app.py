@@ -921,9 +921,57 @@ def upload_design(sid):
     return jsonify({"path": path, "url": url, "validation": result})
 
 
+@app.route("/api/sets/<sid>/products/<path:pid>/photo", methods=["GET"])
+def product_photo(sid, pid):
+    """Bare product photo URL for the centre mockup.
+
+    Priority: the product's own stored mockups/hero/images, then
+    catalog template images, then the Shopify featured image via the
+    stored token. Never mutates sets.json. No photo (no token, failed
+    lookup, or none on file) returns photo null with an honest error
+    instead of an invented image.
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    for url in (p.get("mockups") or []):
+        if url:
+            return jsonify({"photo": url, "source": "mockup"})
+    if p.get("hero_image"):
+        return jsonify({"photo": p["hero_image"], "source": "hero"})
+    for url in (p.get("images") or []):
+        if url:
+            return jsonify({"photo": url, "source": "product"})
+    if p.get("image"):
+        return jsonify({"photo": p["image"], "source": "product"})
+    template = get_template(pid)
+    if template and template.get("images"):
+        return jsonify({"photo": template["images"][0],
+                        "source": "catalog"})
+    if p.get("kind") == "catalog":
+        return jsonify({"photo": None,
+                        "error": "no catalog image on file"}), 200
+    try:
+        url = shopify_api.get_product_image(pid)
+    except Exception:
+        return jsonify({"photo": None,
+                        "error": "Shopify photo unavailable"}), 200
+    if url:
+        return jsonify({"photo": url, "source": "shopify"})
+    return jsonify({"photo": None,
+                    "error": "no photo on file for this product"}), 200
+
+
 @app.route("/api/sets/<sid>/mockups", methods=["POST"])
 def make_mockups(sid):
     """Body: {design: path, photos: {product_id: photo_path}}.
+
+    A missing or empty design renders the bare product photo (plus any
+    visible text layers) instead of failing, so Preview mockup works
+    before a design is uploaded.
 
     Renders each product with its effective placement (master or
     override), skipping the design for products that hide it, and
@@ -957,7 +1005,7 @@ def make_mockups(sid):
         return path
 
     try:
-        design_path = resolve(body["design"])
+        design_path = resolve(body.get("design") or None)
         photos = {pid: resolve(p) for pid, p in body.get("photos", {}).items()}
     except Exception:
         return jsonify({"error": "Could not load a design or product photo."}), 400

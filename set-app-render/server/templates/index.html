@@ -23,6 +23,13 @@
 <p><small>Build sets, place one design, publish to the whole set. Phone friendly.</small></p>
 
 <div class="card">
+  <h2>Open a set</h2>
+  <p><small>Tap a set to open it, then add products to it below.</small></p>
+  <div id="setList"><small>Loading sets...</small></div>
+  <p id="currentSetLine"><small>No set selected yet.</small></p>
+</div>
+
+<div class="card">
   <h2>1. New set</h2>
   <input id="setName" placeholder="Set name, e.g. Oregon Ducks Set">
   <button onclick="createSet()">Create set</button>
@@ -64,6 +71,59 @@
 
 <script>
 let currentSet = null;
+let allSets = [];
+function updateCurrentSetLine() {  const line = document.getElementById('currentSetLine');
+  if (!currentSet) { line.innerHTML = '<small>No set selected yet.</small>'; return; }
+  const n = currentSet.products.length;
+  line.innerHTML = '<small>Open: <b>' + esc(currentSet.name) + '</b> (' + n + (n === 1 ? ' product' : ' products') + ')</small>';
+}
+function syncCache() {
+  // addProduct / lock toggles replace currentSet with a fresh server
+  // object, so the cached list entry must follow or the selector's
+  // product count goes stale.
+  if (!currentSet) return;
+  for (let i = 0; i < allSets.length; i++) {
+    if (allSets[i].id === currentSet.id) { allSets[i] = currentSet; break; }
+  }
+}
+function renderSetList() {
+  const box = document.getElementById('setList');
+  if (!allSets.length) { box.innerHTML = '<small>No sets yet. Create one below.</small>'; return; }
+  box.innerHTML = allSets.map(function(s) {
+    const n = s.products.length;
+    const label = esc(s.name) + ' (' + n + (n === 1 ? ' product' : ' products') + ')';
+    const cls = currentSet && currentSet.id === s.id ? '' : 'secondary';
+    const suffix = currentSet && currentSet.id === s.id ? ' (open)' : '';
+    return '<button class="' + cls + '" onclick="selectSet(\'' + esc(s.id) + '\')">' + label + suffix + '</button>';
+  }).join('');
+}
+async function loadSetList() {
+  const box = document.getElementById('setList');
+  let r;
+  try {
+    r = await fetch('/api/sets');
+  } catch (e) {
+    box.innerHTML = '<small>Could not load sets. Check connection and reload.</small>';
+    return;
+  }
+  if (!r.ok) { box.innerHTML = '<small>Could not load sets. Reload and try again.</small>'; return; }
+  allSets = await r.json();
+  renderSetList();
+}
+function selectSet(id) {
+  const found = allSets.filter(function(s) { return s.id === id; })[0];
+  if (!found) return;
+  currentSet = found;
+  const mp = currentSet.master_placement || {};
+  document.getElementById('x').value = (mp.x === undefined ? 0.5 : mp.x);
+  document.getElementById('y').value = (mp.y === undefined ? 0.45 : mp.y);
+  document.getElementById('s').value = (mp.scale === undefined ? 0.5 : mp.scale);
+  showVals();
+  updateCurrentSetLine();
+  renderSetList();
+  renderProducts();
+  if (document.getElementById('productSearch').value.trim().length >= 2) searchProducts();
+}
 function showVals() {
   document.getElementById('xVal').textContent = (+document.getElementById('x').value).toFixed(2);
   document.getElementById('yVal').textContent = (+document.getElementById('y').value).toFixed(2);
@@ -75,6 +135,9 @@ async function createSet() {
   const r = await fetch('/api/sets', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
   currentSet = await r.json();
   document.getElementById('sets').innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
+  allSets.push(currentSet);
+  updateCurrentSetLine();
+  renderSetList();
   renderProducts();
 }
 function esc(s) {
@@ -98,6 +161,9 @@ async function addProduct() {
   if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
   currentSet = await r.json();
   document.getElementById('productId').value = '';
+  syncCache();
+  updateCurrentSetLine();
+  renderSetList();
   renderProducts();
 }
 let searchTimer = null;
@@ -151,6 +217,9 @@ async function addSearchedProduct(pid) {
   const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ product_id: pid }) });
   if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
   currentSet = await r.json();
+  syncCache();
+  updateCurrentSetLine();
+  renderSetList();
   renderProducts();
   searchProducts();
 }
@@ -159,6 +228,9 @@ async function toggleLock(pid, locked) {
   const r = await fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/lock', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ locked: !locked }) });
   if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not change lock.'); }
   currentSet = await r.json();
+  syncCache();
+  updateCurrentSetLine();
+  renderSetList();
   renderProducts();
 }
 async function uploadDesign() {
@@ -175,9 +247,11 @@ async function saveMaster() {
   const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: 0 };
   const r = await fetch('/api/sets/' + currentSet.id + '/master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ placement }) });
   currentSet = await r.json();
+  syncCache();
   document.getElementById('masterResult').innerHTML = '<p>Master saved. Every locked product now follows it.</p>';
 }
 showVals();
+loadSetList();
 </script>
 </body>
 </html>

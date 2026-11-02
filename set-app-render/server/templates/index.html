@@ -78,7 +78,7 @@
       <button id="tabBack" class="secondary" onclick="setViewSide('back')">BACK</button>
     </div>
     <div class="mockupWrap" id="centreWrap">
-      <div id="centreEmpty"><p style="padding:20px"><small>No mockup yet. Open a set, upload a design, then tap a product's Preview mockup.</small></p></div>
+      <div id="centreEmpty"><p style="padding:20px"><small>Open a set to see its product photo with the dashed placement box. Upload a design to see it placed on the photo.</small></p></div>
       <img id="centreImg" alt="Product mockup" style="display:none" onload="positionPlaceBox()">
       <div class="placebox" id="placeBox" style="display:none"></div>
     </div>
@@ -372,6 +372,9 @@ function renderProducts() {
         + '<button class="secondary" onclick="reorderMockup(\'' + esc(p.product_id) + '\', ' + i + ', -1)">Up</button>'
         + '<button class="secondary" onclick="reorderMockup(\'' + esc(p.product_id) + '\', ' + i + ', 1)">Down</button></div>';
     }).join('');
+    const reorderBlock = ((p.mockups || []).length >= 2)
+      ? '<div><h3>Mockup order</h3><p><small>Use Up / Down to reorder mockups. First is the storefront image when no hero is picked.</small></p>' + reorderRows + '</div>'
+      : '';
     return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
       + '<div style="display:flex;gap:10px;align-items:flex-start">' + productThumb(p)
       + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + title + '</b>' + badge
@@ -391,8 +394,8 @@ function renderProducts() {
       + '<label>Base cost</label><input id="cost-' + sid + '" inputmode="decimal" placeholder="e.g. 12.50" value="' + (p.base_cost === undefined || p.base_cost === null ? '' : esc(p.base_cost)) + '">'
       + '<button class="secondary" onclick="savePricing(\'' + esc(p.product_id) + '\')">Save price</button>'
       + '<div id="priceResult-' + sid + '"></div></details>'
-      + (mockups.length ? '<details onclick="event.stopPropagation()"><summary>Mockups + hero</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button>'
-      + '<p><small>Reorder mockups (first is the storefront image when no hero is picked):</small></p>' + reorderRows + '</details>' : '')
+      + (mockups.length ? '<details onclick="event.stopPropagation()"><summary>Mockups + hero</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button></details>' : '')
+      + reorderBlock
       + '</div>';
   }).join('');
 }
@@ -467,15 +470,24 @@ async function removeProduct(pid) {
 }
 async function previewMockup(pid) {
   if (!currentSet) return alert('Create a set first.');
-  if (!currentSet.design_url) return alert('Upload a design first.');
   const sid = safeId(pid);
   const box = document.getElementById('preview-' + sid);
   box.innerHTML = '<small>Making preview...</small>';
   const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
-  const photo = (p && (p.hero_image || (p.images || [])[0])) || '';
+  let photo = (p && (p.hero_image || (p.images || [])[0] || p.image || p._photo)) || '';
+  if (!photo) {
+    try {
+      const pr = await fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo');
+      const pj = await pr.json();
+      if (pj.photo) { photo = pj.photo; if (p) p._photo = photo; }
+    } catch (e) {}
+  }
   if (!photo) { box.innerHTML = '<small>No product photo to preview on.</small>'; return; }
   try {
-    const r = await fetch('/api/sets/' + currentSet.id + '/mockups', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ design: currentSet.design_url, photos: { [pid]: photo } }) });
+    const body = { photos: {} };
+    body.photos[pid] = photo;
+    if (currentSet.design_url) body.design = currentSet.design_url;
+    const r = await fetch('/api/sets/' + currentSet.id + '/mockups', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Preview failed.');
     const url = j.mockups[pid];
@@ -503,7 +515,7 @@ function setViewSide(side) {
 }
 function centreImageUrl(p) {
   if (!p) return '';
-  return (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || '';
+  return (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || p._photo || '';
 }
 function renderCentreMockup() {
   const img = document.getElementById('centreImg');
@@ -511,12 +523,36 @@ function renderCentreMockup() {
   const box = document.getElementById('placeBox');
   const p = selectedProduct();
   const url = p ? centreImageUrl(p) : '';
-  if (!url || viewSide === 'back') {
+  if (viewSide === 'back') {
     img.style.display = 'none';
     empty.style.display = 'block';
-    if (viewSide === 'back' && p) empty.innerHTML = '<p style="padding:20px"><small>Back side preview is not available. FRONT is the working side.</small></p>';
-    else if (p) empty.innerHTML = '<p style="padding:20px"><small>No mockup yet for ' + esc(p.title || p.product_id) + '. Tap its Preview mockup button.</small></p>';
+    if (p) empty.innerHTML = '<p style="padding:20px"><small>Back side preview is not available. FRONT is the working side.</small></p>';
     box.style.display = 'none';
+    return;
+  }
+  if (!url) {
+    img.style.display = 'none';
+    box.style.display = 'none';
+    empty.style.display = 'block';
+    if (p && !p._photoTried) {
+      p._photoTried = true;
+      const pid = p.product_id;
+      empty.innerHTML = '<p style="padding:20px"><small>Loading product photo...</small></p>';
+      fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo')
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+          const sel = selectedProduct();
+          if (j.photo && sel && sel.product_id === pid) {
+            p._photo = j.photo;
+            renderCentreMockup();
+          } else if (sel && sel.product_id === pid) {
+            empty.innerHTML = '<p style="padding:20px"><small>No photo on file for ' + esc(p.title || p.product_id) + '. Tap its Preview mockup button once a product photo is available.</small></p>';
+          }
+        })
+        .catch(function() {});
+    } else if (p) {
+      empty.innerHTML = '<p style="padding:20px"><small>No photo on file for ' + esc(p.title || p.product_id) + '. Tap its Preview mockup button once a product photo is available.</small></p>';
+    }
     return;
   }
   empty.style.display = 'none';

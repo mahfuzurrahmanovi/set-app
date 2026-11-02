@@ -312,3 +312,47 @@ def search_products(query, limit=20):
             }
         )
     return results
+
+
+def create_draft_product(title, description="", tags=None, options=None,
+                         variants=None, images=None):
+    """Create a product in DRAFT status only. Never live.
+
+    title: product title (max 255 chars, enforced by the caller).
+    description: HTML/text body for the listing.
+    tags: list of tag strings (sent comma-separated).
+    options: list of {"name": ..., "values": [...]} (e.g. Color, Size).
+    variants: list of {"option1": ..., "option2": ..., "price": ...,
+        "compare_at_price": ...} (compare_at_price optional, omitted
+        when empty).
+    images: list of image URLs (mockups rendered by this app).
+    Returns the created product dict. Raises RuntimeError with the
+    HTTP status only on failure; the token never appears in errors.
+    """
+    product = {
+        "title": title,
+        "status": "draft",
+        "body_html": description or "",
+        "tags": ", ".join(tags or []),
+    }
+    if options:
+        product["options"] = options
+    if variants:
+        product["variants"] = variants
+    if images:
+        product["images"] = [{"src": url, "position": i + 1}
+                             for i, url in enumerate(images)]
+    try:
+        r = requests.post(
+            _api("/products.json"),
+            headers=_headers(),
+            json={"product": product},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Shopify draft create failed ({exc})")
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Shopify draft create failed (HTTP {r.status_code})"
+        )
+    return r.json().get("product", {})

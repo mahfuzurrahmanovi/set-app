@@ -52,6 +52,13 @@
 <div class="card">
   <h2>4. Products in this set</h2>
   <p><small>Unlock a product to adjust it alone. Lock it again to return to the master.</small></p>
+  <label>Search products</label>
+  <input id="productSearch" placeholder="Search by name, e.g. Oregon hoodie" oninput="debouncedSearch()">
+  <button onclick="searchProducts()">Search</button>
+  <div id="searchResults"></div>
+  <label>Add by product ID</label>
+  <input id="productId" placeholder="Product ID, e.g. 15469998538906">
+  <button onclick="addProduct()">Add product</button>
   <div id="products"><small>No set selected yet. Create a set first.</small></div>
 </div>
 
@@ -68,7 +75,91 @@ async function createSet() {
   const r = await fetch('/api/sets', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
   currentSet = await r.json();
   document.getElementById('sets').innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
-  document.getElementById('products').innerHTML = '<small>Add products from the Shopify side, then unlock any product here to adjust it alone.</small>';
+  renderProducts();
+}
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function renderProducts() {
+  const box = document.getElementById('products');
+  if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
+  if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one above.</small>'; return; }
+  box.innerHTML = currentSet.products.map(function(p) {
+    const action = p.locked ? 'Unlock' : 'Lock';
+    return '<div style="margin-top:12px"><b>' + esc(p.product_id) + '</b> <small>' + (p.locked ? 'Locked' : 'Unlocked') + '</small>'
+      + '<button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button></div>';
+  }).join('');
+}
+async function addProduct() {
+  if (!currentSet) return alert('Create a set first.');
+  const pid = document.getElementById('productId').value.trim();
+  if (!pid) return alert('Type a product ID first.');
+  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ product_id: pid }) });
+  if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
+  currentSet = await r.json();
+  document.getElementById('productId').value = '';
+  renderProducts();
+}
+let searchTimer = null;
+let searchSeq = 0;
+function debouncedSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(searchProducts, 300);
+}
+async function searchProducts() {
+  const box = document.getElementById('searchResults');
+  const q = document.getElementById('productSearch').value.trim();
+  if (q.length < 2) { box.innerHTML = ''; return; }
+  const mySeq = ++searchSeq;
+  box.innerHTML = '<small>Searching...</small>';
+  let r;
+  try {
+    r = await fetch('/api/products/search?q=' + encodeURIComponent(q));
+  } catch (e) {
+    if (mySeq !== searchSeq) return;
+    box.innerHTML = '<small>Search failed. Check connection and try again.</small>';
+    return;
+  }
+  const j = await r.json().catch(function(){ return {}; });
+  if (mySeq !== searchSeq) return;
+  if (!r.ok) {
+    if (r.status === 503) {
+      box.innerHTML = '<small>Shopify is not connected. <a href="/auth/shopify">Connect Shopify</a> first, then search again.</small>';
+    } else {
+      box.innerHTML = '<small>' + esc(j.error || 'Search failed. Try again.') + '</small>';
+    }
+    return;
+  }
+  const products = j.products || [];
+  if (!products.length) { box.innerHTML = '<small>No products found for "' + esc(q) + '".</small>'; return; }
+  const inSet = currentSet ? currentSet.products.map(function(p) { return p.product_id; }) : [];
+  box.innerHTML = products.map(function(p) {
+    const already = inSet.indexOf(p.id) !== -1;
+    const thumb = p.image
+      ? '<img src="' + esc(p.image) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">'
+      : '<span style="width:56px;height:56px;border-radius:8px;background:#eee;display:inline-block"></span>';
+    const btn = already
+      ? '<button class="secondary" style="margin-top:0" disabled>In set</button>'
+      : '<button style="margin-top:0" onclick="addSearchedProduct(\'' + esc(p.id) + '\')">Add</button>';
+    return '<div style="display:flex;gap:10px;align-items:center;margin-top:12px">' + thumb
+      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + esc(p.title) + '</b><br><small>' + (p.price ? esc(p.price) : 'Price not shown') + '</small></div>'
+      + '<div style="min-width:96px">' + btn + '</div></div>';
+  }).join('');
+}
+async function addSearchedProduct(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ product_id: pid }) });
+  if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
+  currentSet = await r.json();
+  renderProducts();
+  searchProducts();
+}
+async function toggleLock(pid, locked) {
+  if (!currentSet) return;
+  const r = await fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/lock', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ locked: !locked }) });
+  if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not change lock.'); }
+  currentSet = await r.json();
+  renderProducts();
 }
 async function uploadDesign() {
   if (!currentSet) return alert('Create a set first.');

@@ -16,6 +16,16 @@
   img.preview { width: 100%; border-radius: 12px; margin-top: 12px; }
   .row { display: flex; gap: 10px; } .row > * { flex: 1; }
   small { color: #555; }
+  .warn { color: #b91c1c; font-weight: 700; }
+  .ok { color: #0f766e; font-weight: 700; }
+  .badge { display: inline-block; background: #fef3c7; border-radius: 6px; padding: 2px 8px; font-size: 13px; }
+  details { margin-top: 12px; } details summary { font-weight: 600; padding: 10px 0; cursor: pointer; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chips label { font-weight: 400; margin-top: 0; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; }
+  .chips label input { width: auto; margin-right: 6px; }
+  .previewWrap { position: relative; margin-top: 12px; }
+  .previewWrap img { width: 100%; border-radius: 12px; display: block; }
+  .safezone { position: absolute; left: 10%; top: 10%; width: 80%; height: 80%; border: 2px dashed #dc2626; border-radius: 8px; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -52,6 +62,12 @@
   <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
   <label>Size <span id="sVal">0.50</span></label>
   <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <div class="row">
+    <button class="secondary" onclick="aidCenterH()">Center left / right</button>
+    <button class="secondary" onclick="aidCenterV()">Center up / down</button>
+  </div>
+  <button class="secondary" onclick="aidScaleToFit()">Scale to fit + center</button>
+  <p><small>These buttons move the sliders. Tap "Save master placement" after.</small></p>
   <button onclick="saveMaster()">Save master placement</button>
   <div id="masterResult"></div>
 </div>
@@ -67,6 +83,40 @@
   <input id="productId" placeholder="Product ID, e.g. 15469998538906">
   <button onclick="addProduct()">Add product</button>
   <div id="products"><small>No set selected yet. Create a set first.</small></div>
+</div>
+
+<div class="card">
+  <h2>5. Set details</h2>
+  <p><small>Title, description and tags go on the Shopify listing. One listing per set in Combine mode, one per product in Split mode.</small></p>
+  <label>Title (max 255 characters)</label>
+  <input id="detailName" placeholder="Set title">
+  <label>Description</label>
+  <input id="detailDesc" placeholder="General description for the whole set">
+  <label>Tags (comma separated)</label>
+  <input id="detailTags" placeholder="e.g. oregon ducks, fan gift">
+  <label>Grouping</label>
+  <div class="row">
+    <button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button>
+    <button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button>
+  </div>
+  <button onclick="saveDetails()">Save set details</button>
+  <div id="detailResult"></div>
+</div>
+
+<div class="card">
+  <h2>6. Catalog products</h2>
+  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet.</small></p>
+  <div id="catalogList"><small>Loading catalog...</small></div>
+</div>
+
+<div class="card">
+  <h2>7. Variants, profit, publish</h2>
+  <div id="variantCount"><small>Open a set to see variant counts.</small></div>
+  <div id="publishStatus"></div>
+  <button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
+  <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
+  <div id="publishResult"></div>
+  <p><small>Draft only, never live. Ovi fulfils orders manually. A draft with negative profit is blocked: raise the price first.</small></p>
 </div>
 
 <script>
@@ -122,6 +172,9 @@ function selectSet(id) {
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
+  fillDetails();
+  renderVariantCount();
+  renderPublishStatus();
   if (document.getElementById('productSearch').value.trim().length >= 2) searchProducts();
 }
 function showVals() {
@@ -139,19 +192,228 @@ async function createSet() {
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
+  fillDetails();
+  renderVariantCount();
+  renderPublishStatus();
 }
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function safeId(pid) { return String(pid).replace(/[^A-Za-z0-9]/g, '_'); }
+function variantCountOf(p) {
+  const c = (p.colours || []).length, s = (p.sizes || []).length;
+  return (c && s) ? (c * s) : null;
+}
+function profitOf(p) {
+  if (p.sale_price === undefined || p.sale_price === null || p.sale_price === '') return null;
+  if (p.base_cost === undefined || p.base_cost === null || p.base_cost === '') return null;
+  return (+p.sale_price) - (+p.base_cost);
 }
 function renderProducts() {
   const box = document.getElementById('products');
   if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
   if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one above.</small>'; return; }
   box.innerHTML = currentSet.products.map(function(p) {
+    const sid = safeId(p.product_id);
     const action = p.locked ? 'Unlock' : 'Lock';
-    return '<div style="margin-top:12px"><b>' + esc(p.product_id) + '</b> <small>' + (p.locked ? 'Locked' : 'Unlocked') + '</small>'
-      + '<button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button></div>';
+    const title = esc(p.title || p.product_id);
+    const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>' : '';
+    const vc = variantCountOf(p);
+    const profit = profitOf(p);
+    const profitLine = profit === null ? '<small>Profit: set sale price and base cost below.</small>'
+      : (profit < 0 ? '<span class="warn">Profit: ' + profit.toFixed(2) + ' (negative, publish blocked)</span>'
+      : '<span class="ok">Profit: ' + profit.toFixed(2) + ' per item</span>');
+    const colourOpts = p.all_colours || p.colours || [];
+    const sizeOpts = p.all_sizes || p.sizes || [];
+    const colourChips = colourOpts.map(function(c) {
+      const checked = (p.colours || []).indexOf(c) !== -1 ? ' checked' : '';
+      return '<label><input type="checkbox" data-prod="' + esc(p.product_id) + '" data-kind="colour" value="' + esc(c) + '"' + checked + '> ' + esc(c) + '</label>';
+    }).join('');
+    const sizeChips = sizeOpts.map(function(s) {
+      const checked = (p.sizes || []).indexOf(s) !== -1 ? ' checked' : '';
+      return '<label><input type="checkbox" data-prod="' + esc(p.product_id) + '" data-kind="size" value="' + esc(s) + '"' + checked + '> ' + esc(s) + '</label>';
+    }).join('');
+    const mockups = [];
+    (p.mockups || []).forEach(function(u) { if (mockups.indexOf(u) === -1) mockups.push(u); });
+    if (p.hero_image && mockups.indexOf(p.hero_image) === -1) mockups.push(p.hero_image);
+    if (p.image && mockups.indexOf(p.image) === -1) mockups.push(p.image);
+    (p.images || []).forEach(function(u) { if (mockups.indexOf(u) === -1) mockups.push(u); });
+    const heroOpts = mockups.map(function(u) {
+      const sel = p.hero_image === u ? ' selected' : '';
+      return '<option value="' + esc(u) + '"' + sel + '>' + esc(u.split('/').pop()) + '</option>';
+    }).join('');
+    return '<div style="margin-top:16px;border-top:1px solid #eee;padding-top:12px"><b>' + title + '</b>' + badge
+      + '<br><small>' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + ' | ' + profitLine + '</small>'
+      + '<button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
+      + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button>'
+      + '<div id="preview-' + sid + '"></div>'
+      + '<details><summary>Colours, sizes, price</summary>'
+      + '<p><small>Colours (tick to include):</small></p><div class="chips">' + colourChips + '</div>'
+      + '<p><small>Sizes (tick to include):</small></p><div class="chips">' + sizeChips + '</div>'
+      + '<button class="secondary" onclick="saveVariants(\'' + esc(p.product_id) + '\')">Save colours + sizes</button>'
+      + '<label>Sale price</label><input id="sale-' + sid + '" inputmode="decimal" placeholder="e.g. 27.99" value="' + (p.sale_price === undefined || p.sale_price === null ? '' : esc(p.sale_price)) + '">'
+      + '<label>Compare-at price (optional)</label><input id="cmp-' + sid + '" inputmode="decimal" placeholder="e.g. 34.99" value="' + (p.compare_at_price === undefined || p.compare_at_price === null ? '' : esc(p.compare_at_price)) + '">'
+      + '<label>Base cost</label><input id="cost-' + sid + '" inputmode="decimal" placeholder="e.g. 12.50" value="' + (p.base_cost === undefined || p.base_cost === null ? '' : esc(p.base_cost)) + '">'
+      + '<button class="secondary" onclick="savePricing(\'' + esc(p.product_id) + '\')">Save price</button>'
+      + '<div id="priceResult-' + sid + '"></div></details>'
+      + (mockups.length ? '<details><summary>Hero image</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button></details>' : '')
+      + '</div>';
   }).join('');
+}
+async function postSet(path, body) {
+  const r = await fetch('/api/sets/' + currentSet.id + path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(function(){ return {}; });
+  if (!r.ok) throw new Error(j.error || ('Request failed (' + r.status + ')'));
+  return j;
+}
+async function saveVariants(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  const colours = [], sizes = [];
+  document.querySelectorAll('input[data-prod="' + pid + '"]').forEach(function(cb) {
+    if (!cb.checked) return;
+    if (cb.getAttribute('data-kind') === 'colour') colours.push(cb.value); else sizes.push(cb.value);
+  });
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { colours: colours, sizes: sizes });
+    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+  } catch (e) { alert(e.message); }
+}
+async function savePricing(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  const sid = safeId(pid);
+  const body = {
+    sale_price: document.getElementById('sale-' + sid).value.trim(),
+    compare_at_price: document.getElementById('cmp-' + sid).value.trim(),
+    base_cost: document.getElementById('cost-' + sid).value.trim()
+  };
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/pricing', body);
+    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    document.getElementById('priceResult-' + sid).innerHTML = '<p class="ok">Price saved.</p>';
+  } catch (e) { alert(e.message); }
+}
+async function saveHero(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  const sid = safeId(pid);
+  const image = document.getElementById('hero-' + sid).value;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/hero', { image: image });
+    currentSet = j; syncCache(); renderProducts();
+  } catch (e) { alert(e.message); }
+}
+async function previewMockup(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  if (!currentSet.design_url) return alert('Upload a design first.');
+  const sid = safeId(pid);
+  const box = document.getElementById('preview-' + sid);
+  box.innerHTML = '<small>Making preview...</small>';
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  const photo = (p && (p.hero_image || (p.images || [])[0])) || '';
+  if (!photo) { box.innerHTML = '<small>No product photo to preview on.</small>'; return; }
+  try {
+    const r = await fetch('/api/sets/' + currentSet.id + '/mockups', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ design: currentSet.design_url, photos: { [pid]: photo } }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Preview failed.');
+    const url = j.mockups[pid];
+    currentSet.products.forEach(function(x) { if (x.product_id === pid) { x.mockups = [url]; if (!x.hero_image) x.hero_image = url; } });
+    box.innerHTML = '<div class="previewWrap"><img src="' + esc(url) + '" alt="Mockup preview"><div class="safezone" id="sz-' + sid + '"></div></div>'
+      + '<label><input type="checkbox" checked onchange="document.getElementById(\'sz-' + sid + '\').style.display = this.checked ? \'block\' : \'none\'"> Show safe zone (keep important design parts inside the dashed box)</label>';
+  } catch (e) { box.innerHTML = '<small>' + esc(e.message) + '</small>'; }
+}
+function aidCenterH() { document.getElementById('x').value = 0.5; showVals(); }
+function aidCenterV() { document.getElementById('y').value = 0.5; showVals(); }
+function aidScaleToFit() { document.getElementById('x').value = 0.5; document.getElementById('y').value = 0.5; document.getElementById('s').value = 0.8; showVals(); }
+async function loadCatalogTemplates() {
+  const box = document.getElementById('catalogList');
+  let r;
+  try { r = await fetch('/api/catalog/templates'); } catch (e) { box.innerHTML = '<small>Could not load catalog. Reload and try again.</small>'; return; }
+  if (!r.ok) { box.innerHTML = '<small>Could not load catalog.</small>'; return; }
+  const items = await r.json();
+  box.innerHTML = items.map(function(t) {
+    return '<div style="margin-top:12px"><b>' + esc(t.title) + '</b> <small>(' + esc(t.brand) + ')</small><br>'
+      + '<small>' + t.colours.length + ' colours, ' + t.sizes.length + ' sizes</small> <span class="badge">Catalog template, not a store product yet</span>'
+      + '<button onclick="addCatalogTemplate(\'' + esc(t.product_id) + '\')">Add to set</button></div>';
+  }).join('') + '<button class="secondary" onclick="addAllCatalogTemplates()">Add all 3 to set</button>';
+}
+async function addCatalogTemplate(pid) {
+  if (!currentSet) return alert('Create or open a set first.');
+  try {
+    const j = await postSet('/catalog-templates', { product_ids: [pid] });
+    currentSet = j.set; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+  } catch (e) { alert(e.message); }
+}
+async function addAllCatalogTemplates() {
+  if (!currentSet) return alert('Create or open a set first.');
+  try {
+    const j = await postSet('/catalog-templates', { all: true });
+    currentSet = j.set; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+  } catch (e) { alert(e.message); }
+}
+function setGrouping(g) {
+  if (!currentSet) return alert('Create a set first.');
+  currentSet.grouping = g;
+  document.getElementById('groupCombine').style.outline = g === 'combine' ? '3px solid #0f766e' : '';
+  document.getElementById('groupSplit').style.outline = g === 'split' ? '3px solid #0f766e' : '';
+}
+async function saveDetails() {
+  if (!currentSet) return alert('Create a set first.');
+  const body = {
+    name: document.getElementById('detailName').value.trim(),
+    description: document.getElementById('detailDesc').value.trim(),
+    tags: document.getElementById('detailTags').value.trim(),
+    grouping: currentSet.grouping || 'combine'
+  };
+  try {
+    const j = await postSet('/details', body);
+    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    document.getElementById('detailResult').innerHTML = '<p class="ok">Set details saved.</p>';
+  } catch (e) { alert(e.message); }
+}
+function fillDetails() {
+  if (!currentSet) return;
+  document.getElementById('detailName').value = currentSet.name || '';
+  document.getElementById('detailDesc').value = currentSet.description || '';
+  document.getElementById('detailTags').value = (currentSet.tags || []).join(', ');
+  setGrouping(currentSet.grouping || 'combine');
+}
+async function renderVariantCount() {
+  const box = document.getElementById('variantCount');
+  if (!currentSet) { box.innerHTML = '<small>Open a set to see variant counts.</small>'; return; }
+  try {
+    const r = await fetch('/api/sets/' + currentSet.id + '/variant-count');
+    const j = await r.json();
+    const cls = j.guard_ok ? 'ok' : 'warn';
+    box.innerHTML = '<p>Grouping: <b>' + esc(j.grouping) + '</b> | Combined variants: <b>' + j.total_combine + '</b></p><p class="' + cls + '">' + esc(j.message) + '</p>';
+  } catch (e) { box.innerHTML = '<small>Could not load variant counts.</small>'; }
+}
+function renderPublishStatus() {
+  const box = document.getElementById('publishStatus');
+  if (!currentSet) { box.innerHTML = ''; return; }
+  const state = currentSet.publish_state || 'draft';
+  const map = { draft: 'Not published yet', launching: 'Publishing...', published_draft: 'Published as DRAFT in Shopify (not live)', failed: 'Last publish failed', unavailable: 'Hidden' };
+  box.innerHTML = '<p>Publish status: <b>' + esc(map[state] || state) + '</b>' + (currentSet.publish_error ? ' <span class="warn">' + esc(currentSet.publish_error) + '</span>' : '') + '</p>';
+}
+async function previewPublish() {
+  if (!currentSet) return alert('Create a set first.');
+  const box = document.getElementById('publishResult');
+  box.innerHTML = '<small>Checking...</small>';
+  try {
+    const j = await postSet('/publish-draft', { dry_run: true });
+    const names = j.products.map(function(p) { return esc(p.title) + ' (' + p.variants.length + ' variants)'; }).join('<br>');
+    box.innerHTML = '<p class="ok">Preview only, nothing created.</p><p>' + names + '</p><p><small>' + esc(j.note) + '</small></p>';
+  } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
+}
+async function publishDraft() {
+  if (!currentSet) return alert('Create a set first.');
+  if (!confirm('Publish this set to Shopify as DRAFT products? They will NOT go live.')) return;
+  const box = document.getElementById('publishResult');
+  box.innerHTML = '<small>Publishing...</small>';
+  try {
+    const j = await postSet('/publish-draft', {});
+    currentSet.publish_state = 'published_draft'; currentSet.artwork_locked = true;
+    renderPublishStatus();
+    box.innerHTML = '<p class="ok">Published as draft. Shopify IDs: ' + esc((j.shopify_ids || []).join(', ')) + '</p>';
+  } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function addProduct() {
   if (!currentSet) return alert('Create a set first.');
@@ -240,7 +502,11 @@ async function uploadDesign() {
   const fd = new FormData(); fd.append('design', files[0]);
   const r = await fetch('/api/sets/' + currentSet.id + '/upload', { method: 'POST', body: fd });
   const j = await r.json();
-  document.getElementById('uploadResult').innerHTML = '<p>Uploaded. Saved at ' + j.url + '</p>';
+  if (!r.ok) { document.getElementById('uploadResult').innerHTML = '<p class="warn">' + esc(j.error || 'Upload failed.') + '</p>'; return; }
+  currentSet.design_url = j.url;
+  const v = j.validation || {};
+  const warns = (v.warnings || []).map(function(w) { return '<br><small>' + esc(w) + '</small>'; }).join('');
+  document.getElementById('uploadResult').innerHTML = '<p class="ok">Uploaded and checked: transparent PNG, ' + v.width + ' x ' + v.height + ' px, about ' + v.dpi_estimate + ' DPI estimated.' + warns + '</p>';
 }
 async function saveMaster() {
   if (!currentSet) return alert('Create a set first.');
@@ -252,6 +518,7 @@ async function saveMaster() {
 }
 showVals();
 loadSetList();
+loadCatalogTemplates();
 </script>
 </body>
 </html>

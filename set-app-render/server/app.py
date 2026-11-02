@@ -10,8 +10,10 @@ everything here from her phone, Ovi fulfills manually after sales.
 
 import json
 import os
+import re
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 import requests
 from flask import Flask, jsonify, redirect, request, send_from_directory, session
@@ -19,7 +21,8 @@ from flask import Flask, jsonify, redirect, request, send_from_directory, sessio
 import shopify as shopify_api
 from catalog import TEMPLATES, get_template, template_entry
 from design_validation import validate_design
-from mockup import render_set_mockups
+from mockup import effective_placement, render_set_mockups
+from text_layers import composite_layers, render_text_png, validate_layer
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_FILE = os.path.join(BASE, "data", "sets.json")
@@ -52,6 +55,35 @@ def find_product(set_obj, pid):
         if p.get("product_id") == pid:
             return p
     return None
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def layer_png_path(sid, lid):
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    return os.path.join(UPLOAD_DIR, f"text_{sid}_{lid}.png")
+
+
+def layer_png_url(sid, lid):
+    return f"/static/uploads/text_{sid}_{lid}.png"
+
+
+def visible_layer_pngs(set_obj, product):
+    """Rendered PNG paths for layers visible on this product."""
+    out = []
+    per_product_hidden = set(product.get("hidden_layers") or [])
+    for layer in set_obj.get("text_layers", []) or []:
+        if layer.get("hidden") or layer["id"] in per_product_hidden:
+            continue
+        path = layer_png_path(set_obj["id"], layer["id"])
+        if os.path.exists(path):
+            out.append(path)
+    return out
 
 
 def parse_money(value):
@@ -352,11 +384,14 @@ def create_set():
         "name": body.get("name", "Untitled set"),
         "description": "",
         "tags": [],
+        "slug": "",
         "grouping": "combine",
         "publish_state": "draft",
         "publish_error": None,
         "artwork_locked": False,
         "design_url": None,
+        "text_layers": [],
+        "draft_saved_at": None,
         "products": [
             {"product_id": pid, "locked": True, "override_placement": None}
             for pid in body.get("products", [])
@@ -400,6 +435,31 @@ def add_product(sid):
     return jsonify(sets[sid])
 
 
+@app.route("/api/sets/<sid>/products/<path:pid>/remove", methods=["POST"])
+def remove_product(sid, pid):
+    """Remove a product from the set (the trash icon).
+
+    Blocked once the set is published as a draft: the draft already
+    lists the product, so duplicate the set instead of editing it.
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    if sets[sid].get("publish_state") == "published_draft":
+        return jsonify({
+            "error": "This set is already published as a draft. "
+                     "Duplicate the set to change its products."
+        }), 409
+    before = len(sets[sid]["products"])
+    sets[sid]["products"] = [
+        p for p in sets[sid]["products"] if p["product_id"] != pid
+    ]
+    if len(sets[sid]["products"]) == before:
+        return jsonify({"error": "product not in set"}), 404
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
 @app.route("/api/sets/<sid>/products/<pid>/lock", methods=["POST"])
 def set_lock(sid, pid):
     body = request.get_json(force=True) or {}
@@ -420,7 +480,11 @@ def set_lock(sid, pid):
 
 @app.route("/api/sets/<sid>/details", methods=["POST"])
 def set_details(sid):
-    """Title (max 255), description, tags, combine/split grouping."""
+    """Title (max 255), URL slug, description, tags, combine/split.
+
+    Every save stamps draft_saved_at: the set is a saved draft, not a
+    published product. Publishing stays draft-only via /publish-draft.
+    """
     body = request.get_json(force=True) or {}
     sets = load_sets()
     if sid not in sets:
@@ -431,6 +495,14 @@ def set_details(sid):
         if len(name) > 255:
             return jsonify({"error": "Title must be 255 characters or fewer."}), 400
         s["name"] = name
+    if "slug" in body:
+        slug = str(body["slug"]).strip()
+        if slug and (len(slug) > 100 or not SLUG_RE.match(slug)):
+            return jsonify({
+                "error": "URL slug may only use lowercase letters, numbers "
+                         "and hyphens, e.g. oregon-ducks-set."
+            }), 400
+        s["slug"] = slug
     if "description" in body:
         s["description"] = str(body["description"])
     if "tags" in body:
@@ -444,8 +516,25 @@ def set_details(sid):
         if body["grouping"] not in ("combine", "split"):
             return jsonify({"error": "grouping must be combine or split"}), 400
         s["grouping"] = body["grouping"]
+    s["draft_saved_at"] = now_iso()
     save_sets(sets)
     return jsonify(s)
+
+
+@app.route("/api/sets/<sid>/save-draft", methods=["POST"])
+def save_draft(sid):
+    """Explicit Save Draft: stamps draft_saved_at, changes nothing else.
+
+    The set remains a draft, not a published product. This is the
+    Gearlaunch "Save and exit" equivalent; publishing is separate and
+    draft-only.
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    sets[sid]["draft_saved_at"] = now_iso()
+    save_sets(sets)
+    return jsonify(sets[sid])
 
 
 @app.route("/api/sets/<sid>/catalog-templates", methods=["POST"])
@@ -536,6 +625,163 @@ def set_product_hero(sid, pid):
     if image not in allowed:
         return jsonify({"error": "image is not one of this product's mockups"}), 400
     p["hero_image"] = image
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/mockups/reorder",
+           methods=["POST"])
+def reorder_mockups(sid, pid):
+    """Reorder a product's mockups (up/down beyond the hero pick).
+
+    Body {order: [...]} must be a permutation of the current mockups
+    list. The hero pick is untouched.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    current = list(p.get("mockups", []) or [])
+    order = body.get("order") or []
+    if sorted(order) != sorted(current):
+        return jsonify({
+            "error": "order must list each current mockup exactly once."
+        }), 400
+    p["mockups"] = list(order)
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+def _find_layer(set_obj, lid):
+    for layer in set_obj.get("text_layers", []) or []:
+        if layer["id"] == lid:
+            return layer
+    return None
+
+
+@app.route("/api/sets/<sid>/design/remove", methods=["POST"])
+def remove_design(sid):
+    """Remove the design from the whole set (text layers stay).
+
+    Blocked once the artwork is locked after a real draft publish.
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    if sets[sid].get("artwork_locked"):
+        return jsonify({
+            "error": "This set's design is locked after publishing. "
+                     "Duplicate the set to change the design."
+        }), 409
+    sets[sid]["design_url"] = None
+    sets[sid]["design_width"] = None
+    sets[sid]["design_height"] = None
+    sets[sid]["design_dpi"] = None
+    sets[sid]["design_warnings"] = []
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/layers", methods=["POST"])
+def add_text_layer(sid):
+    """Add a basic text layer (content, font, size, colour, lettercase,
+    rotation, opacity). Renders its transparent PNG immediately."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    if sets[sid].get("artwork_locked"):
+        return jsonify({
+            "error": "This set's design is locked after publishing. "
+                     "Duplicate the set to change it."
+        }), 409
+    layer, error = validate_layer(body)
+    if error:
+        return jsonify({"error": error}), 400
+    render_text_png(layer, layer_png_path(sid, layer["id"]))
+    sets[sid].setdefault("text_layers", []).append(layer)
+    save_sets(sets)
+    return jsonify({"layer": layer, "set": sets[sid]}), 201
+
+
+@app.route("/api/sets/<sid>/layers/<lid>/hide", methods=["POST"])
+def hide_text_layer(sid, lid):
+    """Eye hide/show for a text layer, across the whole set."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    layer = _find_layer(sets[sid], lid)
+    if layer is None:
+        return jsonify({"error": "layer not found"}), 404
+    layer["hidden"] = bool(body.get("hidden", True))
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/layers/<lid>/delete", methods=["POST"])
+def delete_text_layer(sid, lid):
+    """Delete a text layer on ALL products (global delete)."""
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    before = len(sets[sid].get("text_layers", []) or [])
+    sets[sid]["text_layers"] = [
+        layer for layer in (sets[sid].get("text_layers") or [])
+        if layer["id"] != lid
+    ]
+    if len(sets[sid]["text_layers"]) == before:
+        return jsonify({"error": "layer not found"}), 404
+    for p in sets[sid]["products"]:
+        p["hidden_layers"] = [
+            x for x in (p.get("hidden_layers") or []) if x != lid
+        ]
+    path = layer_png_path(sid, lid)
+    if os.path.exists(path):
+        os.remove(path)
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/layers/<lid>/hide",
+           methods=["POST"])
+def hide_layer_on_product(sid, pid, lid):
+    """Hide a text layer on THIS product only (per-product delete)."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    if _find_layer(sets[sid], lid) is None:
+        return jsonify({"error": "layer not found"}), 404
+    hidden = set(p.get("hidden_layers") or [])
+    if body.get("hidden", True):
+        hidden.add(lid)
+    else:
+        hidden.discard(lid)
+    p["hidden_layers"] = sorted(hidden)
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/design-hide",
+           methods=["POST"])
+def hide_design_on_product(sid, pid):
+    """Hide the main design on THIS product only (its mockup renders
+    the bare photo, plus any visible text layers)."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    p["hide_design"] = bool(body.get("hidden", True))
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -666,6 +912,11 @@ def upload_design(sid):
     f.save(path)
     url = "/static/uploads/" + os.path.basename(path)
     sets[sid]["design_url"] = url
+    # Artwork spec line data for the editor (dimensions + est. DPI).
+    sets[sid]["design_width"] = result.get("width")
+    sets[sid]["design_height"] = result.get("height")
+    sets[sid]["design_dpi"] = result.get("dpi_estimate")
+    sets[sid]["design_warnings"] = result.get("warnings", [])
     save_sets(sets)
     return jsonify({"path": path, "url": url, "validation": result})
 
@@ -673,9 +924,12 @@ def upload_design(sid):
 @app.route("/api/sets/<sid>/mockups", methods=["POST"])
 def make_mockups(sid):
     """Body: {design: path, photos: {product_id: photo_path}}.
-    Renders each product with its effective placement (master or override).
-    Paths may be local files, /static/... URLs (resolved to the server
-    static dir), or http(s) URLs (downloaded first, e.g. catalog images).
+
+    Renders each product with its effective placement (master or
+    override), skipping the design for products that hide it, and
+    compositing each product's visible text layers on top. Paths may
+    be local files, /static/... URLs (resolved to the server static
+    dir), or http(s) URLs (downloaded first, e.g. catalog images).
     Rendered mockup URLs are stored on the product entries so the hero
     picker and the draft publish can use them.
     """
@@ -707,12 +961,20 @@ def make_mockups(sid):
         photos = {pid: resolve(p) for pid, p in body.get("photos", {}).items()}
     except Exception:
         return jsonify({"error": "Could not load a design or product photo."}), 400
-    results = render_set_mockups(
-        sets[sid], design_path, photos, MOCKUP_DIR
-    )
-    urls = {
-        pid: "/static/mockups/" + os.path.basename(p) for pid, p in results.items()
-    }
+    os.makedirs(MOCKUP_DIR, exist_ok=True)
+    urls = {}
+    for p in sets[sid]["products"]:
+        pid = p["product_id"]
+        photo = photos.get(pid)
+        if not photo:
+            continue
+        out = os.path.join(MOCKUP_DIR, f"{sid}_{pid}.jpg")
+        design = None if p.get("hide_design") else design_path
+        composite_layers(
+            photo, design, effective_placement(sets[sid], pid),
+            visible_layer_pngs(sets[sid], p), out,
+        )
+        urls[pid] = "/static/mockups/" + os.path.basename(out)
     for pid, url in urls.items():
         p = find_product(sets[sid], pid)
         if p is not None:

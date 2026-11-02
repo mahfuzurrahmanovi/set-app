@@ -6,13 +6,16 @@
 <title>Set App</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #f6f6f6; }
-  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 28px; }
-  input, button { font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; box-sizing: border-box; }
+  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 8px; }
+  input, button, select, textarea { font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; box-sizing: border-box; }
   button { background: #0f766e; color: #fff; border: none; margin-top: 10px; }
   button.secondary { background: #fff; color: #111; border: 1px solid #ccc; }
+  button.danger { background: #fff; color: #b91c1c; border: 1px solid #e5a0a0; }
   .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; }
   label { display: block; margin-top: 12px; font-weight: 600; }
   input[type=range] { padding: 0; }
+  input[type=checkbox] { width: auto; }
+  input[type=color] { padding: 4px; height: 48px; }
   img.preview { width: 100%; border-radius: 12px; margin-top: 12px; }
   .row { display: flex; gap: 10px; } .row > * { flex: 1; }
   small { color: #555; }
@@ -23,9 +26,26 @@
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   .chips label { font-weight: 400; margin-top: 0; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; }
   .chips label input { width: auto; margin-right: 6px; }
-  .previewWrap { position: relative; margin-top: 12px; }
-  .previewWrap img { width: 100%; border-radius: 12px; display: block; }
-  .safezone { position: absolute; left: 10%; top: 10%; width: 80%; height: 80%; border: 2px dashed #dc2626; border-radius: 8px; pointer-events: none; }
+  /* Gearlaunch-style editor: centre mockup + right products panel. */
+  .topbar { position: sticky; top: 0; z-index: 5; }
+  .topbar .row button { margin-top: 0; }
+  .editor { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; align-items: start; }
+  @media (max-width: 900px) { .editor { grid-template-columns: 1fr; } }
+  .tabs { display: flex; gap: 8px; margin-top: 8px; }
+  .tabs button { margin-top: 0; }
+  .tabs button.active { outline: 3px solid #0f766e; }
+  .mockupWrap { position: relative; margin-top: 12px; background: #eee; border-radius: 12px; min-height: 200px; }
+  .mockupWrap img { width: 100%; border-radius: 12px; display: block; }
+  .placebox { position: absolute; border: 2px dashed #dc2626; border-radius: 4px; pointer-events: none; box-sizing: border-box; }
+  .prodcard { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
+  .prodcard.selected { outline: 3px solid #0f766e; }
+  .prodcard .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #eee; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .swatch { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #ccc; display: inline-block; }
+  .iconbtn { width: auto; padding: 8px 12px; margin-top: 8px; }
+  .layerrow { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+  .layerrow > span { flex: 1; }
+  .layerrow button { width: auto; margin-top: 0; padding: 8px 12px; }
 </style>
 </head>
 <body>
@@ -34,28 +54,92 @@
 
 <div class="card">
   <h2>Open a set</h2>
-  <p><small>Tap a set to open it, then add products to it below.</small></p>
+  <p><small>Tap a set to open it, then design on it below.</small></p>
   <div id="setList"><small>Loading sets...</small></div>
   <p id="currentSetLine"><small>No set selected yet.</small></p>
 </div>
 
-<div class="card">
-  <h2>1. New set</h2>
-  <input id="setName" placeholder="Set name, e.g. Oregon Ducks Set">
-  <button onclick="createSet()">Create set</button>
-  <div id="sets"></div>
+<div class="card topbar">
+  <h2 id="topSetName">No set open</h2>
+  <p id="draftLine"><small>Open a set to start.</small></p>
+  <div class="row">
+    <button class="secondary" onclick="saveDraft()">Save</button>
+    <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
+  </div>
+  <div id="publishStatus"></div>
+  <p><small>Save stores a draft, it does not publish. Publish creates DRAFT products only, never live. Ovi fulfils orders manually.</small></p>
+</div>
+
+<div class="editor">
+  <div class="card">
+    <h2>Design</h2>
+    <div class="tabs">
+      <button id="tabFront" class="active" onclick="setViewSide('front')">FRONT</button>
+      <button id="tabBack" class="secondary" onclick="setViewSide('back')">BACK</button>
+    </div>
+    <div class="mockupWrap" id="centreWrap">
+      <div id="centreEmpty"><p style="padding:20px"><small>No mockup yet. Open a set, upload a design, then tap a product's Preview mockup.</small></p></div>
+      <img id="centreImg" alt="Product mockup" style="display:none" onload="positionPlaceBox()">
+      <div class="placebox" id="placeBox" style="display:none"></div>
+    </div>
+    <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
+    <p id="artworkSpec"><small>No design uploaded yet.</small></p>
+    <p><small>Design rule: transparent PNG only, no background. 150 DPI minimum for sharp prints (estimate at a 12 inch print width).</small></p>
+    <h2>Layers</h2>
+    <p><small>One design across the whole set, plus text layers. Eye hides a layer. "This product" hides it on the selected product only. "All products" deletes a text layer everywhere.</small></p>
+    <div id="layersList"><small>Open a set to see layers.</small></div>
+    <details><summary>Add a text layer</summary>
+      <label>Text</label><input id="layerText" placeholder="e.g. GO DUCKS">
+      <label>Font</label><select id="layerFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
+      <label>Size (pixels)</label><input id="layerSize" inputmode="numeric" value="120">
+      <label>Colour</label><input type="color" id="layerColour" value="#111111">
+      <label>Lettercase</label><select id="layerCase"><option value="none">As typed</option><option value="upper">UPPERCASE</option><option value="lower">lowercase</option></select>
+      <label>Rotation (degrees, -180 to 180)</label><input id="layerRotation" inputmode="decimal" value="0">
+      <label>Opacity (0 to 100%)</label><input type="range" id="layerOpacity" min="0" max="100" value="100">
+      <button class="secondary" onclick="addTextLayer()">Add text layer</button>
+      <div id="layerResult"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2 id="productsHeader">PRODUCTS (0)</h2>
+    <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    <div id="products"><small>No set selected yet. Create a set first.</small></div>
+    <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
+  </div>
 </div>
 
 <div class="card">
-  <h2>2. Upload design</h2>
+  <h2>Settings</h2>
+  <p><small>Name, URL, tags and description go on the Shopify listing.</small></p>
+  <label>Title (max 255 characters)</label>
+  <input id="detailName" placeholder="Set title">
+  <label>URL slug (lowercase letters, numbers, hyphens)</label>
+  <input id="detailSlug" placeholder="e.g. oregon-ducks-set">
+  <label>Description</label>
+  <input id="detailDesc" placeholder="General description for the whole set">
+  <label>Tags (comma separated)</label>
+  <input id="detailTags" placeholder="e.g. oregon ducks, fan gift">
+  <label>Grouping</label>
+  <div class="row">
+    <button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button>
+    <button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button>
+  </div>
+  <button onclick="saveDetails()">Save set details</button>
+  <div id="detailResult"></div>
+</div>
+
+<div class="card">
+  <h2>Upload design</h2>
   <input type="file" id="designFile" accept="image/*" multiple>
   <button onclick="uploadDesign()">Upload</button>
   <div id="uploadResult"></div>
 </div>
 
 <div class="card">
-  <h2>3. Master placement</h2>
-  <p><small>Place once on the first product. Every locked product follows this.</small></p>
+  <h2>Master placement</h2>
+  <p><small>Place once on the first product. Every locked product follows this. The dashed box on the mockup shows this placement.</small></p>
   <label>Left / right <span id="xVal">0.50</span></label>
   <input type="range" id="x" min="0" max="1" step="0.01" value="0.5" oninput="showVals()">
   <label>Up / down <span id="yVal">0.45</span></label>
@@ -72,65 +156,61 @@
   <div id="masterResult"></div>
 </div>
 
-<div class="card">
-  <h2>4. Products in this set</h2>
-  <p><small>Unlock a product to adjust it alone. Lock it again to return to the master.</small></p>
+<div class="card" id="pickerCard">
+  <h2>Add products</h2>
+  <p><small>Search the store, or add by product ID. Members already in the set show "In set".</small></p>
   <label>Search products</label>
   <input id="productSearch" placeholder="Search by name, e.g. Oregon hoodie" oninput="debouncedSearch()">
+  <label>Sort results</label>
+  <select id="searchSort" onchange="rerenderSearch()"><option value="none">As found</option><option value="asc">Price: low to high</option><option value="desc">Price: high to low</option></select>
   <button onclick="searchProducts()">Search</button>
   <div id="searchResults"></div>
   <label>Add by product ID</label>
   <input id="productId" placeholder="Product ID, e.g. 15469998538906">
   <button onclick="addProduct()">Add product</button>
-  <div id="products"><small>No set selected yet. Create a set first.</small></div>
 </div>
 
 <div class="card">
-  <h2>5. Set details</h2>
-  <p><small>Title, description and tags go on the Shopify listing. One listing per set in Combine mode, one per product in Split mode.</small></p>
-  <label>Title (max 255 characters)</label>
-  <input id="detailName" placeholder="Set title">
-  <label>Description</label>
-  <input id="detailDesc" placeholder="General description for the whole set">
-  <label>Tags (comma separated)</label>
-  <input id="detailTags" placeholder="e.g. oregon ducks, fan gift">
-  <label>Grouping</label>
-  <div class="row">
-    <button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button>
-    <button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button>
-  </div>
-  <button onclick="saveDetails()">Save set details</button>
-  <div id="detailResult"></div>
-</div>
-
-<div class="card">
-  <h2>6. Catalog products</h2>
-  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet.</small></p>
+  <h2>Catalog products</h2>
+  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet. Catalog templates have no price yet, so they cannot be sorted by price.</small></p>
   <div id="catalogList"><small>Loading catalog...</small></div>
 </div>
 
 <div class="card">
-  <h2>7. Variants, profit, publish</h2>
+  <h2>Variants, profit, publish</h2>
   <div id="variantCount"><small>Open a set to see variant counts.</small></div>
-  <div id="publishStatus"></div>
   <button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
   <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
   <div id="publishResult"></div>
   <p><small>Draft only, never live. Ovi fulfils orders manually. A draft with negative profit is blocked: raise the price first.</small></p>
 </div>
 
+<div class="card">
+  <h2>New set</h2>
+  <input id="setName" placeholder="Set name, e.g. Oregon Ducks Set">
+  <button onclick="createSet()">Create set</button>
+  <div id="sets"></div>
+</div>
+
 <script>
 let currentSet = null;
 let allSets = [];
-function updateCurrentSetLine() {  const line = document.getElementById('currentSetLine');
+let selectedPid = null;
+let viewSide = 'front';
+let lastSearchResults = [];
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function safeId(pid) { return String(pid).replace(/[^A-Za-z0-9]/g, '_'); }
+function updateCurrentSetLine() {
+  const line = document.getElementById('currentSetLine');
   if (!currentSet) { line.innerHTML = '<small>No set selected yet.</small>'; return; }
   const n = currentSet.products.length;
   line.innerHTML = '<small>Open: <b>' + esc(currentSet.name) + '</b> (' + n + (n === 1 ? ' product' : ' products') + ')</small>';
+  document.getElementById('topSetName').textContent = currentSet.name || 'Untitled set';
+  document.getElementById('productsHeader').textContent = 'PRODUCTS (' + n + ')';
 }
 function syncCache() {
-  // addProduct / lock toggles replace currentSet with a fresh server
-  // object, so the cached list entry must follow or the selector's
-  // product count goes stale.
   if (!currentSet) return;
   for (let i = 0; i < allSets.length; i++) {
     if (allSets[i].id === currentSet.id) { allSets[i] = currentSet; break; }
@@ -160,10 +240,20 @@ async function loadSetList() {
   allSets = await r.json();
   renderSetList();
 }
+function selectedProduct() {
+  if (!currentSet) return null;
+  const found = currentSet.products.filter(function(p) { return p.product_id === selectedPid; })[0];
+  return found || currentSet.products[0] || null;
+}
+function effectivePlacementOf(p) {
+  if (p && !p.locked && p.override_placement) return p.override_placement;
+  return (currentSet && currentSet.master_placement) || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
+}
 function selectSet(id) {
   const found = allSets.filter(function(s) { return s.id === id; })[0];
   if (!found) return;
   currentSet = found;
+  selectedPid = (found.products[0] && found.products[0].product_id) || null;
   const mp = currentSet.master_placement || {};
   document.getElementById('x').value = (mp.x === undefined ? 0.5 : mp.x);
   document.getElementById('y').value = (mp.y === undefined ? 0.45 : mp.y);
@@ -175,6 +265,10 @@ function selectSet(id) {
   fillDetails();
   renderVariantCount();
   renderPublishStatus();
+  renderDraftLine();
+  renderCentreMockup();
+  renderArtworkSpec();
+  renderLayers();
   if (document.getElementById('productSearch').value.trim().length >= 2) searchProducts();
 }
 function showVals() {
@@ -189,17 +283,18 @@ async function createSet() {
   currentSet = await r.json();
   document.getElementById('sets').innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
   allSets.push(currentSet);
+  selectedPid = null;
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
   fillDetails();
   renderVariantCount();
   renderPublishStatus();
+  renderDraftLine();
+  renderCentreMockup();
+  renderArtworkSpec();
+  renderLayers();
 }
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-function safeId(pid) { return String(pid).replace(/[^A-Za-z0-9]/g, '_'); }
 function variantCountOf(p) {
   const c = (p.colours || []).length, s = (p.sizes || []).length;
   return (c && s) ? (c * s) : null;
@@ -209,12 +304,38 @@ function profitOf(p) {
   if (p.base_cost === undefined || p.base_cost === null || p.base_cost === '') return null;
   return (+p.sale_price) - (+p.base_cost);
 }
+function money(v) {
+  if (v === undefined || v === null || v === '') return 'not set';
+  return (+v).toFixed(2);
+}
+const COLOR_HEX = {
+  black: '#111111', white: '#f5f5f5', navy: '#1f3864', red: '#c00000',
+  royal: '#274e9d', gold: '#d4af37', 'irish green': '#0e7a3e',
+  'kelly green': '#1fae5f', 'forest green': '#1e5631', orange: '#ed7d31',
+  purple: '#7030a0', 'sport grey': '#8a8d93', grey: '#8a8d93',
+  'cardinal red': '#9e1b32', 'carolina blue': '#7fb3d5', 'light blue': '#a9cce3',
+  'light pink': '#f5c6d6', maroon: '#800000', 'dark heather': '#5d6d7e',
+  'dark chocolate': '#3e2723', 'safety green': '#a8d08d', ash: '#c9c9c9',
+  'athletic heather': '#9aa0a6', sand: '#e6d3b3', asphalt: '#2f2f2f',
+  'dark grey heather': '#6b7280', 'deep heather': '#4b5563',
+  'heather true royal': '#3b5bb5', 'team purple': '#5b2c8a', 'true royal': '#2b4c9b'
+};
+function swatchHex(name) {
+  const key = String(name).toLowerCase().trim();
+  return COLOR_HEX[key] || '#cccccc';
+}
+function productThumb(p) {
+  const url = (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || '';
+  if (!url) return '<span class="thumb" style="display:inline-block"></span>';
+  return '<img class="thumb" src="' + esc(url) + '" alt="">';
+}
 function renderProducts() {
   const box = document.getElementById('products');
   if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
-  if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one above.</small>'; return; }
+  if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one below.</small>'; return; }
   box.innerHTML = currentSet.products.map(function(p) {
     const sid = safeId(p.product_id);
+    const isSel = selectedPid === p.product_id || (!selectedPid && currentSet.products[0] === p);
     const action = p.locked ? 'Unlock' : 'Lock';
     const title = esc(p.title || p.product_id);
     const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>' : '';
@@ -223,6 +344,10 @@ function renderProducts() {
     const profitLine = profit === null ? '<small>Profit: set sale price and base cost below.</small>'
       : (profit < 0 ? '<span class="warn">Profit: ' + profit.toFixed(2) + ' (negative, publish blocked)</span>'
       : '<span class="ok">Profit: ' + profit.toFixed(2) + ' per item</span>');
+    const defaultColor = (p.colours && p.colours[0]) ? esc(p.colours[0]) : 'not set';
+    const swatches = (p.colours || []).map(function(c) {
+      return '<span class="swatch" title="' + esc(c) + '" style="background:' + swatchHex(c) + '"></span>';
+    }).join('');
     const colourOpts = p.all_colours || p.colours || [];
     const sizeOpts = p.all_sizes || p.sizes || [];
     const colourChips = colourOpts.map(function(c) {
@@ -242,12 +367,22 @@ function renderProducts() {
       const sel = p.hero_image === u ? ' selected' : '';
       return '<option value="' + esc(u) + '"' + sel + '>' + esc(u.split('/').pop()) + '</option>';
     }).join('');
-    return '<div style="margin-top:16px;border-top:1px solid #eee;padding-top:12px"><b>' + title + '</b>' + badge
-      + '<br><small>' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + ' | ' + profitLine + '</small>'
-      + '<button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
-      + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button>'
+    const reorderRows = (p.mockups || []).map(function(u, i) {
+      return '<div class="layerrow"><span><small>' + esc(u.split('/').pop()) + '</small></span>'
+        + '<button class="secondary" onclick="reorderMockup(\'' + esc(p.product_id) + '\', ' + i + ', -1)">Up</button>'
+        + '<button class="secondary" onclick="reorderMockup(\'' + esc(p.product_id) + '\', ' + i + ', 1)">Down</button></div>';
+    }).join('');
+    return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
+      + '<div style="display:flex;gap:10px;align-items:flex-start">' + productThumb(p)
+      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + title + '</b>' + badge
+      + '<br><small>Selling price: ' + money(p.sale_price) + ' | Unit cost: ' + money(p.base_cost) + ' | ' + profitLine + '</small>'
+      + '<br><small>Default color: ' + defaultColor + ' | ' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + '</small>'
+      + '<div class="swatches">' + swatches + '</div></div>'
+      + '<button class="secondary iconbtn" title="Remove from set" onclick="event.stopPropagation();removeProduct(\'' + esc(p.product_id) + '\')">X</button></div>'
+      + '<div class="row" onclick="event.stopPropagation()"><button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
+      + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button></div>'
       + '<div id="preview-' + sid + '"></div>'
-      + '<details><summary>Colours, sizes, price</summary>'
+      + '<details onclick="event.stopPropagation()"><summary>Pick colors</summary>'
       + '<p><small>Colours (tick to include):</small></p><div class="chips">' + colourChips + '</div>'
       + '<p><small>Sizes (tick to include):</small></p><div class="chips">' + sizeChips + '</div>'
       + '<button class="secondary" onclick="saveVariants(\'' + esc(p.product_id) + '\')">Save colours + sizes</button>'
@@ -256,7 +391,8 @@ function renderProducts() {
       + '<label>Base cost</label><input id="cost-' + sid + '" inputmode="decimal" placeholder="e.g. 12.50" value="' + (p.base_cost === undefined || p.base_cost === null ? '' : esc(p.base_cost)) + '">'
       + '<button class="secondary" onclick="savePricing(\'' + esc(p.product_id) + '\')">Save price</button>'
       + '<div id="priceResult-' + sid + '"></div></details>'
-      + (mockups.length ? '<details><summary>Hero image</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button></details>' : '')
+      + (mockups.length ? '<details onclick="event.stopPropagation()"><summary>Mockups + hero</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button>'
+      + '<p><small>Reorder mockups (first is the storefront image when no hero is picked):</small></p>' + reorderRows + '</details>' : '')
       + '</div>';
   }).join('');
 }
@@ -265,6 +401,12 @@ async function postSet(path, body) {
   const j = await r.json().catch(function(){ return {}; });
   if (!r.ok) throw new Error(j.error || ('Request failed (' + r.status + ')'));
   return j;
+}
+function refreshAfterSet(j) {
+  currentSet = j.set || j;
+  syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts();
+  renderVariantCount(); renderPublishStatus(); renderDraftLine();
+  renderCentreMockup(); renderArtworkSpec(); renderLayers();
 }
 async function saveVariants(pid) {
   if (!currentSet) return alert('Create a set first.');
@@ -275,7 +417,7 @@ async function saveVariants(pid) {
   });
   try {
     const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { colours: colours, sizes: sizes });
-    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    refreshAfterSet(j);
   } catch (e) { alert(e.message); }
 }
 async function savePricing(pid) {
@@ -288,7 +430,7 @@ async function savePricing(pid) {
   };
   try {
     const j = await postSet('/products/' + encodeURIComponent(pid) + '/pricing', body);
-    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    refreshAfterSet(j);
     document.getElementById('priceResult-' + sid).innerHTML = '<p class="ok">Price saved.</p>';
   } catch (e) { alert(e.message); }
 }
@@ -298,7 +440,29 @@ async function saveHero(pid) {
   const image = document.getElementById('hero-' + sid).value;
   try {
     const j = await postSet('/products/' + encodeURIComponent(pid) + '/hero', { image: image });
-    currentSet = j; syncCache(); renderProducts();
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function reorderMockup(pid, index, dir) {
+  if (!currentSet) return alert('Create a set first.');
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  if (!p || !p.mockups) return;
+  const order = p.mockups.slice();
+  const to = index + dir;
+  if (to < 0 || to >= order.length) return;
+  const tmp = order[index]; order[index] = order[to]; order[to] = tmp;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/mockups/reorder', { order: order });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function removeProduct(pid) {
+  if (!currentSet) return alert('Create a set first.');
+  if (!confirm('Remove this product from the set?')) return;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/remove', {});
+    if (selectedPid === pid) selectedPid = null;
+    refreshAfterSet(j);
   } catch (e) { alert(e.message); }
 }
 async function previewMockup(pid) {
@@ -316,13 +480,180 @@ async function previewMockup(pid) {
     if (!r.ok) throw new Error(j.error || 'Preview failed.');
     const url = j.mockups[pid];
     currentSet.products.forEach(function(x) { if (x.product_id === pid) { x.mockups = [url]; if (!x.hero_image) x.hero_image = url; } });
-    box.innerHTML = '<div class="previewWrap"><img src="' + esc(url) + '" alt="Mockup preview"><div class="safezone" id="sz-' + sid + '"></div></div>'
-      + '<label><input type="checkbox" checked onchange="document.getElementById(\'sz-' + sid + '\').style.display = this.checked ? \'block\' : \'none\'"> Show safe zone (keep important design parts inside the dashed box)</label>';
+    box.innerHTML = '<small class="ok">Preview ready. See the Design panel above.</small>';
+    selectedPid = pid;
+    renderProducts();
+    renderCentreMockup();
   } catch (e) { box.innerHTML = '<small>' + esc(e.message) + '</small>'; }
 }
 function aidCenterH() { document.getElementById('x').value = 0.5; showVals(); }
 function aidCenterV() { document.getElementById('y').value = 0.5; showVals(); }
 function aidScaleToFit() { document.getElementById('x').value = 0.5; document.getElementById('y').value = 0.5; document.getElementById('s').value = 0.8; showVals(); }
+function selectProduct(pid) {
+  selectedPid = pid;
+  renderProducts();
+  renderCentreMockup();
+}
+function setViewSide(side) {
+  viewSide = side;
+  document.getElementById('tabFront').className = side === 'front' ? 'active' : 'secondary';
+  document.getElementById('tabBack').className = side === 'back' ? 'active' : 'secondary';
+  document.getElementById('backNote').style.display = side === 'back' ? 'block' : 'none';
+  renderCentreMockup();
+}
+function centreImageUrl(p) {
+  if (!p) return '';
+  return (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || '';
+}
+function renderCentreMockup() {
+  const img = document.getElementById('centreImg');
+  const empty = document.getElementById('centreEmpty');
+  const box = document.getElementById('placeBox');
+  const p = selectedProduct();
+  const url = p ? centreImageUrl(p) : '';
+  if (!url || viewSide === 'back') {
+    img.style.display = 'none';
+    empty.style.display = 'block';
+    if (viewSide === 'back' && p) empty.innerHTML = '<p style="padding:20px"><small>Back side preview is not available. FRONT is the working side.</small></p>';
+    else if (p) empty.innerHTML = '<p style="padding:20px"><small>No mockup yet for ' + esc(p.title || p.product_id) + '. Tap its Preview mockup button.</small></p>';
+    box.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  img.style.display = 'block';
+  if (img.getAttribute('src') !== url) img.setAttribute('src', url);
+  positionPlaceBox();
+}
+function positionPlaceBox() {
+  const img = document.getElementById('centreImg');
+  const box = document.getElementById('placeBox');
+  if (img.style.display === 'none' || viewSide === 'back') { box.style.display = 'none'; return; }
+  const p = selectedProduct();
+  if (!p || !img.naturalWidth) { box.style.display = 'none'; return; }
+  const pl = effectivePlacementOf(p);
+  const pw = img.naturalWidth, ph = img.naturalHeight;
+  const dw = pl.scale * pw;
+  let dh = dw;
+  if (currentSet && currentSet.design_width && currentSet.design_height) {
+    dh = dw * (currentSet.design_height / currentSet.design_width);
+  }
+  const wPct = (dw / pw) * 100, hPct = (dh / ph) * 100;
+  box.style.display = 'block';
+  box.style.width = wPct + '%';
+  box.style.height = hPct + '%';
+  box.style.left = (pl.x * 100 - wPct / 2) + '%';
+  box.style.top = (pl.y * 100 - hPct / 2) + '%';
+}
+function renderArtworkSpec() {
+  const box = document.getElementById('artworkSpec');
+  if (!currentSet || !currentSet.design_url) { box.innerHTML = '<small>No design uploaded yet.</small>'; return; }
+  const w = currentSet.design_width, h = currentSet.design_height, dpi = currentSet.design_dpi;
+  const spec = (w && h) ? ('Artwork: ' + w + 'x' + h + (dpi ? ' @ est. ' + dpi + ' DPI' : '')) : 'Artwork uploaded.';
+  const p = selectedProduct();
+  const pa = p && p.print_area ? ('<br><small>Print area for ' + esc(p.title || '') + ': ' + esc(p.print_area.position) + ' ' + p.print_area.width + 'x' + p.print_area.height + '</small>') : '';
+  box.innerHTML = '<b>' + esc(spec) + '</b>' + pa;
+}
+function renderLayers() {
+  const box = document.getElementById('layersList');
+  if (!currentSet) { box.innerHTML = '<small>Open a set to see layers.</small>'; return; }
+  const rows = [];
+  const sel = selectedProduct();
+  rows.push('<div class="layerrow"><span><b>Design</b><small> (whole set)</small>' + (currentSet.design_url ? '' : ' <small>none uploaded</small>') + '</span>'
+    + (sel ? '<button class="secondary" onclick="toggleDesignHide(\'' + esc(sel.product_id) + '\')">' + (sel.hide_design ? 'Show on this product' : 'Hide on this product') + '</button>' : '')
+    + '<button class="danger" onclick="removeDesign()">Remove design</button></div>');
+  (currentSet.text_layers || []).forEach(function(l) {
+    const eye = l.hidden ? 'Show' : 'Hide';
+    rows.push('<div class="layerrow"><span><b>Text:</b> ' + esc(l.content) + ' <small>(' + esc(l.font) + ', ' + l.size + 'px, ' + esc(l.colour) + (l.hidden ? ', hidden' : '') + ')</small></span>'
+      + '<button class="secondary" onclick="toggleLayerEye(\'' + esc(l.id) + '\')">' + eye + '</button>'
+      + (sel ? '<button class="secondary" onclick="hideLayerOnProduct(\'' + esc(sel.product_id) + '\', \'' + esc(l.id) + '\')">This product</button>' : '')
+      + '<button class="danger" onclick="deleteLayer(\'' + esc(l.id) + '\')">All products</button></div>');
+  });
+  box.innerHTML = rows.join('');
+}
+async function addTextLayer() {
+  if (!currentSet) return alert('Create a set first.');
+  const body = {
+    content: document.getElementById('layerText').value,
+    font: document.getElementById('layerFont').value,
+    size: document.getElementById('layerSize').value,
+    colour: document.getElementById('layerColour').value,
+    lettercase: document.getElementById('layerCase').value,
+    rotation: document.getElementById('layerRotation').value,
+    opacity: document.getElementById('layerOpacity').value
+  };
+  try {
+    const j = await postSet('/layers', body);
+    refreshAfterSet(j.set);
+    document.getElementById('layerResult').innerHTML = '<p class="ok">Text layer added. Re-run Preview mockup to see it.</p>';
+  } catch (e) { document.getElementById('layerResult').innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
+}
+async function toggleLayerEye(lid) {
+  if (!currentSet) return;
+  const layer = (currentSet.text_layers || []).filter(function(l) { return l.id === lid; })[0];
+  if (!layer) return;
+  try {
+    const j = await postSet('/layers/' + encodeURIComponent(lid) + '/hide', { hidden: !layer.hidden });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function deleteLayer(lid) {
+  if (!currentSet) return;
+  if (!confirm('Delete this text layer on ALL products?')) return;
+  try {
+    const j = await postSet('/layers/' + encodeURIComponent(lid) + '/delete', {});
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function hideLayerOnProduct(pid, lid) {
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  const already = p && (p.hidden_layers || []).indexOf(lid) !== -1;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/layers/' + encodeURIComponent(lid) + '/hide', { hidden: !already });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function toggleDesignHide(pid) {
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/design-hide', { hidden: !p.hide_design });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function removeDesign() {
+  if (!currentSet || !currentSet.design_url) return;
+  if (!confirm('Remove the design from the whole set? Text layers stay.')) return;
+  try {
+    const j = await postSet('/design/remove', {});
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+function fmtDraftTime(iso) {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return null; }
+}
+function renderDraftLine() {
+  const box = document.getElementById('draftLine');
+  if (!currentSet) { box.innerHTML = '<small>Open a set to start.</small>'; return; }
+  const t = fmtDraftTime(currentSet.draft_saved_at);
+  const state = currentSet.publish_state || 'draft';
+  const stateText = state === 'published_draft' ? 'Published as DRAFT in Shopify (not live)' : (state === 'failed' ? 'Last publish failed' : 'Not published yet');
+  box.innerHTML = '<small>' + (t ? 'Draft saved ' + t + ' · ' : 'Draft not saved yet · ') + esc(stateText) + '</small>';
+}
+async function saveDraft() {
+  if (!currentSet) return alert('Create a set first.');
+  try {
+    const j = await postSet('/save-draft', {});
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+function scrollToPickers() {
+  document.getElementById('pickerCard').scrollIntoView({ behavior: 'smooth' });
+}
 async function loadCatalogTemplates() {
   const box = document.getElementById('catalogList');
   let r;
@@ -339,14 +670,14 @@ async function addCatalogTemplate(pid) {
   if (!currentSet) return alert('Create or open a set first.');
   try {
     const j = await postSet('/catalog-templates', { product_ids: [pid] });
-    currentSet = j.set; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    refreshAfterSet(j.set);
   } catch (e) { alert(e.message); }
 }
 async function addAllCatalogTemplates() {
   if (!currentSet) return alert('Create or open a set first.');
   try {
     const j = await postSet('/catalog-templates', { all: true });
-    currentSet = j.set; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
+    refreshAfterSet(j.set);
   } catch (e) { alert(e.message); }
 }
 function setGrouping(g) {
@@ -359,19 +690,21 @@ async function saveDetails() {
   if (!currentSet) return alert('Create a set first.');
   const body = {
     name: document.getElementById('detailName').value.trim(),
+    slug: document.getElementById('detailSlug').value.trim(),
     description: document.getElementById('detailDesc').value.trim(),
     tags: document.getElementById('detailTags').value.trim(),
     grouping: currentSet.grouping || 'combine'
   };
   try {
     const j = await postSet('/details', body);
-    currentSet = j; syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts(); renderVariantCount();
-    document.getElementById('detailResult').innerHTML = '<p class="ok">Set details saved.</p>';
+    refreshAfterSet(j);
+    document.getElementById('detailResult').innerHTML = '<p class="ok">Set details saved (draft).</p>';
   } catch (e) { alert(e.message); }
 }
 function fillDetails() {
   if (!currentSet) return;
   document.getElementById('detailName').value = currentSet.name || '';
+  document.getElementById('detailSlug').value = currentSet.slug || '';
   document.getElementById('detailDesc').value = currentSet.description || '';
   document.getElementById('detailTags').value = (currentSet.tags || []).join(', ');
   setGrouping(currentSet.grouping || 'combine');
@@ -411,7 +744,7 @@ async function publishDraft() {
   try {
     const j = await postSet('/publish-draft', {});
     currentSet.publish_state = 'published_draft'; currentSet.artwork_locked = true;
-    renderPublishStatus();
+    renderPublishStatus(); renderDraftLine();
     box.innerHTML = '<p class="ok">Published as draft. Shopify IDs: ' + esc((j.shopify_ids || []).join(', ')) + '</p>';
   } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
@@ -427,6 +760,7 @@ async function addProduct() {
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
+  renderCentreMockup();
 }
 let searchTimer = null;
 let searchSeq = 0;
@@ -434,10 +768,49 @@ function debouncedSearch() {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(searchProducts, 300);
 }
+function priceNum(p) {
+  if (!p || p.price === undefined || p.price === null) return null;
+  const n = parseFloat(String(p.price).replace(/[^0-9.]/g, ''));
+  return isNaN(n) ? null : n;
+}
+function sortedSearchResults() {
+  const mode = document.getElementById('searchSort').value;
+  const list = lastSearchResults.slice();
+  if (mode === 'asc' || mode === 'desc') {
+    list.sort(function(a, b) {
+      const pa = priceNum(a), pb = priceNum(b);
+      if (pa === null && pb === null) return 0;
+      if (pa === null) return 1;
+      if (pb === null) return -1;
+      return mode === 'asc' ? pa - pb : pb - pa;
+    });
+  }
+  return list;
+}
+function rerenderSearch() {
+  renderSearchResults(sortedSearchResults());
+}
+function renderSearchResults(products) {
+  const box = document.getElementById('searchResults');
+  if (!products.length) { box.innerHTML = '<small>No products found.</small>'; return; }
+  const inSet = currentSet ? currentSet.products.map(function(p) { return p.product_id; }) : [];
+  box.innerHTML = products.map(function(p) {
+    const already = inSet.indexOf(p.id) !== -1;
+    const thumb = p.image
+      ? '<img src="' + esc(p.image) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">'
+      : '<span style="width:56px;height:56px;border-radius:8px;background:#eee;display:inline-block"></span>';
+    const btn = already
+      ? '<button class="secondary" style="margin-top:0" disabled>In set</button>'
+      : '<button style="margin-top:0" onclick="addSearchedProduct(\'' + esc(p.id) + '\')">Add</button>';
+    return '<div style="display:flex;gap:10px;align-items:center;margin-top:12px">' + thumb
+      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + esc(p.title) + '</b><br><small>' + (p.price ? esc(p.price) : 'Price not shown') + '</small></div>'
+      + '<div style="min-width:96px">' + btn + '</div></div>';
+  }).join('');
+}
 async function searchProducts() {
   const box = document.getElementById('searchResults');
   const q = document.getElementById('productSearch').value.trim();
-  if (q.length < 2) { box.innerHTML = ''; return; }
+  if (q.length < 2) { box.innerHTML = ''; lastSearchResults = []; return; }
   const mySeq = ++searchSeq;
   box.innerHTML = '<small>Searching...</small>';
   let r;
@@ -458,21 +831,8 @@ async function searchProducts() {
     }
     return;
   }
-  const products = j.products || [];
-  if (!products.length) { box.innerHTML = '<small>No products found for "' + esc(q) + '".</small>'; return; }
-  const inSet = currentSet ? currentSet.products.map(function(p) { return p.product_id; }) : [];
-  box.innerHTML = products.map(function(p) {
-    const already = inSet.indexOf(p.id) !== -1;
-    const thumb = p.image
-      ? '<img src="' + esc(p.image) + '" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px">'
-      : '<span style="width:56px;height:56px;border-radius:8px;background:#eee;display:inline-block"></span>';
-    const btn = already
-      ? '<button class="secondary" style="margin-top:0" disabled>In set</button>'
-      : '<button style="margin-top:0" onclick="addSearchedProduct(\'' + esc(p.id) + '\')">Add</button>';
-    return '<div style="display:flex;gap:10px;align-items:center;margin-top:12px">' + thumb
-      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + esc(p.title) + '</b><br><small>' + (p.price ? esc(p.price) : 'Price not shown') + '</small></div>'
-      + '<div style="min-width:96px">' + btn + '</div></div>';
-  }).join('');
+  lastSearchResults = j.products || [];
+  rerenderSearch();
 }
 async function addSearchedProduct(pid) {
   if (!currentSet) return alert('Create a set first.');
@@ -483,6 +843,7 @@ async function addSearchedProduct(pid) {
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
+  renderCentreMockup();
   searchProducts();
 }
 async function toggleLock(pid, locked) {
@@ -494,6 +855,7 @@ async function toggleLock(pid, locked) {
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
+  renderCentreMockup();
 }
 async function uploadDesign() {
   if (!currentSet) return alert('Create a set first.');
@@ -504,9 +866,13 @@ async function uploadDesign() {
   const j = await r.json();
   if (!r.ok) { document.getElementById('uploadResult').innerHTML = '<p class="warn">' + esc(j.error || 'Upload failed.') + '</p>'; return; }
   currentSet.design_url = j.url;
+  currentSet.design_width = j.validation.width;
+  currentSet.design_height = j.validation.height;
+  currentSet.design_dpi = j.validation.dpi_estimate;
   const v = j.validation || {};
   const warns = (v.warnings || []).map(function(w) { return '<br><small>' + esc(w) + '</small>'; }).join('');
   document.getElementById('uploadResult').innerHTML = '<p class="ok">Uploaded and checked: transparent PNG, ' + v.width + ' x ' + v.height + ' px, about ' + v.dpi_estimate + ' DPI estimated.' + warns + '</p>';
+  renderArtworkSpec();
 }
 async function saveMaster() {
   if (!currentSet) return alert('Create a set first.');
@@ -515,6 +881,7 @@ async function saveMaster() {
   currentSet = await r.json();
   syncCache();
   document.getElementById('masterResult').innerHTML = '<p>Master saved. Every locked product now follows it.</p>';
+  positionPlaceBox();
 }
 showVals();
 loadSetList();

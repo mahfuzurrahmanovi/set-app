@@ -36,6 +36,7 @@ import hashlib
 import hmac as hmac_mod
 import json
 import os
+import re
 
 import requests
 
@@ -248,3 +249,66 @@ def attach_image_by_url(product_id, image_url, position=1):
     )
     r.raise_for_status()
     return r.json()["image"]
+
+
+def search_products(query, limit=20):
+    """Search Shopify products by title, server-side.
+
+    Returns ONLY id (numeric string), title, price (first variant) and
+    featured image URL. The access token is used in the request header
+    only and never appears in the returned data, logs or errors.
+    Raises RuntimeError when Shopify is not authenticated or the
+    search fails; error messages carry the HTTP status only.
+    """
+    term = re.sub(r'[*"\\]', "", (query or "")).strip()
+    if len(term) < 2:
+        return []
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 50))
+    gql = """
+      query ($q: String!, $n: Int!) {
+        products(first: $n, query: $q) {
+          edges { node {
+            id
+            title
+            featuredImage { url }
+            variants(first: 1) { edges { node { price } } }
+          } }
+        }
+      }
+    """
+    r = requests.post(
+        _api("/graphql.json"),
+        headers=_headers(),
+        json={"query": gql, "variables": {"q": f"title:*{term}*", "n": limit}},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Shopify product search failed (HTTP {r.status_code})")
+    data = r.json()
+    if data.get("errors"):
+        raise RuntimeError("Shopify product search failed")
+    results = []
+    for edge in data.get("data", {}).get("products", {}).get("edges", []):
+        node = edge.get("node", {}) or {}
+        gid = node.get("id", "") or ""
+        pid = gid.rsplit("/", 1)[-1] if gid else ""
+        if not pid:
+            continue
+        variant_edges = (node.get("variants") or {}).get("edges", []) or []
+        price = None
+        if variant_edges:
+            price = (variant_edges[0].get("node") or {}).get("price")
+        image = (node.get("featuredImage") or {}).get("url")
+        results.append(
+            {
+                "id": pid,
+                "title": node.get("title", ""),
+                "price": price,
+                "image": image,
+            }
+        )
+    return results

@@ -103,6 +103,31 @@ def shopify_status():
     return jsonify(shopify_api.status())
 
 
+@app.route("/api/products/search")
+def search_products():
+    """Search Shopify products by title. Returns only id, title,
+    price and image URL per product. Never includes the token."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"products": []})
+    try:
+        results = shopify_api.search_products(q)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if "not authenticated" in msg:
+            return (
+                jsonify(
+                    {
+                        "error": "Shopify is not connected. "
+                        "Open /auth/shopify and approve the app first."
+                    }
+                ),
+                503,
+            )
+        return jsonify({"error": "Product search failed. Try again."}), 502
+    return jsonify({"products": results})
+
+
 @app.route("/api/sets", methods=["GET"])
 def list_sets():
     return jsonify(list(load_sets().values()))
@@ -137,6 +162,25 @@ def set_master(sid):
         return jsonify({"error": "set not found"}), 404
     sets[sid]["master_placement"] = body.get("placement", sets[sid]["master_placement"])
     save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products", methods=["POST"])
+def add_product(sid):
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    raw = body.get("product_id")
+    pid = str(raw).strip() if raw is not None else ""
+    if not pid:
+        return jsonify({"error": "product_id is required"}), 400
+    products = sets[sid]["products"]
+    if not any(p["product_id"] == pid for p in products):
+        products.append(
+            {"product_id": pid, "locked": True, "override_placement": None}
+        )
+        save_sets(sets)
     return jsonify(sets[sid])
 
 

@@ -87,6 +87,63 @@ Later items and guidance from Ovi extend this template into new sets.
 Render Starter web service ($7/mo, always on), chosen 2026-11-01.
 Cannot live reliably on the Muse VM.
 
+## Fix round 3 (2026-11-03, local only, not yet deployed)
+
+Parent audit + independent ChatGPT review both found the app not
+production-ready. Fix round 3 closed the gaps; full test evidence in
+`fix3-test-log.md` (202 checks, 0 failed, including the older suites).
+
+- **Login + CSRF.** Password gate (`SET_APP_PASSWORD` env, read per
+  request; unset = open mode with a visible warning, never a hardcoded
+  password). Every POST needs a session CSRF token; the editor fetches
+  it automatically and reopens the login form on a 401.
+- **Durable storage root.** `SETAPP_DATA_ROOT` env moves sets, uploads
+  and mockups off the ephemeral filesystem. On Render this must point
+  at a persistent disk (1 GB at `/var/setapp-data`), or redeploys keep
+  wiping sets, uploads and the Shopify token.
+- **Safe saves.** One Save button stores everything the editor holds
+  (placement, details, colours, sizes, prices) in a single validated,
+  atomic, write-locked save with a `.bak` fallback; an "Unsaved
+  changes" note shows until it is saved, and switching sets with
+  unsaved edits asks first.
+- **Real product data.** Adding a store product fills title, colours,
+  sizes and per-variant prices from the live listing (a bare ID used to
+  create an empty shell); a Refresh button re-syncs one product without
+  touching the seller's selections, sale price or lock.
+- **Pricing.** Money uses Decimal for validation and profit math;
+  compare-at must be higher than sale; publish still blocks negative
+  profit. Per-variant store prices are used when no flat sale price is
+  set; combine mode adds a Style option (product title) per variant.
+- **Publish safety.** Dry-run returns warnings plus a per-product
+  readiness checklist and creates nothing. A real publish never gets
+  stuck "launching": a failure records state "failed" with partial
+  progress, and retrying resumes from the first uncreated product
+  instead of duplicating. A Shopify product returned with any status
+  other than draft is rejected, not counted as published. Drafts only,
+  never live. After a successful draft publish the editor offers a
+  hidden set-page create (published_at null, not linked anywhere).
+- **Mockup freshness.** Every render stamps the current design version;
+  placement, layer and master edits bump it, so an outdated render is
+  flagged ("tap Preview mockup again") and blocks a real publish. A
+  design re-upload clears outdated mockups. Renders only accept
+  server-issued `/static/` photo URLs, never a rendered mockup or a
+  private-network URL; photos are capped at 3000px wide.
+- **Uploads.** Transparent PNG only, with a real transparency check
+  (at least 3% of pixels must be transparent, not just transparent
+  corners). Text rendering uses bundled DejaVu fonts, so it works on
+  any host.
+- **Editor extras.** Duplicate/delete set, layer edit/reorder/position,
+  per-product placement sliders + rotation + tap-to-place, default
+  colour dropdown, swatch tap toggles the colour checkbox, bulk upload
+  (first file on this set, each extra file as a duplicated set),
+  set export (JSON download, plus a server export endpoint), search
+  capped at 50 results, JSON error responses everywhere.
+- **Still not built (deliberate).** Back-side printing, full
+  drag-to-place, buyer personalization, orders/fulfilment/billing/sync,
+  SQLite migration, fees in profit, layer undo, multi-worker support,
+  set-page theme work. First real draft publish is Ovi's to trigger;
+  it has only ever been tested with a mock client and dry-run.
+
 ## Build order
 1. Mockup engine (placement math + compositing) – proven with a test.
 2. Set CRUD + master/unlock data model (JSON store for v1).

@@ -1,7 +1,7 @@
 """Rebuild tests for the set app (2026-11-03).
 
 Runs against a COPY of the data dir, never the real sets.json.
-Shopify is never called: create_draft_product is monkeypatched, and
+Shopify is never called: create_live_product is monkeypatched, and
 dry-run mode is asserted to skip the client entirely.
 Run: .venv/bin/python server/rebuild_test.py
 """
@@ -154,8 +154,8 @@ def main():
 
         print("== 5. Pricing + profit guard ==")
         calls = []
-        orig_create = shopify_api.create_draft_product
-        shopify_api.create_draft_product = lambda **kw: calls.append(kw) or {"id": 1, "status": "draft", "handle": "test-set-2"}
+        orig_create = shopify_api.create_live_product
+        shopify_api.create_live_product = lambda **kw: calls.append(kw) or {"id": 1, "status": "active", "handle": "test-set-2"}
         try:
             for pid in ("catalog:printify-80", "catalog:printify-945",
                         "catalog:printify-48"):
@@ -172,7 +172,7 @@ def main():
                   str(r.status_code) + str(r.get_json()))
             check("upload validation info",
                   r.get_json()["validation"]["transparent"] is True)
-            r = client.post(f"/api/sets/{sid}/publish-draft",
+            r = client.post(f"/api/sets/{sid}/publish",
                             json={"dry_run": True})
             # Gearlaunch flow (2026-11-03): profit removed, Shopify
             # owns profit, so a price below base cost no longer blocks.
@@ -186,7 +186,7 @@ def main():
                         "catalog:printify-48"):
                 client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                             json={"sale_price": 27.99, "base_cost": 12.50})
-            r = client.post(f"/api/sets/{sid}/publish-draft",
+            r = client.post(f"/api/sets/{sid}/publish",
                             json={"dry_run": True})
             j = r.get_json()
             check("dry-run ok in split mode",
@@ -200,7 +200,7 @@ def main():
                 client.post(f"/api/sets/{sid}/products/{pid}/variants",
                             json={"colours": ["Black", "White"],
                                   "sizes": ["S", "M"]})
-            r = client.post(f"/api/sets/{sid}/publish-draft",
+            r = client.post(f"/api/sets/{sid}/publish",
                             json={"dry_run": True})
             j = r.get_json()
             check("combine dry-run 1 payload, 12 variants",
@@ -211,15 +211,15 @@ def main():
             orig_auth = shopify_api.authenticated
             shopify_api.authenticated = lambda: True
             try:
-                r = client.post(f"/api/sets/{sid}/publish-draft", json={})
+                r = client.post(f"/api/sets/{sid}/publish", json={})
                 j = r.get_json()
                 check("mock publish ok",
                       r.status_code == 200 and j.get("published") is True,
                       str(r.status_code) + str(j))
                 check("mock client called once", len(calls) == 1, str(len(calls)))
-                check("mock payload is draft status",
+                check("mock payload title correct",
                       calls[0].get("title") == "Test Set 2")
-                r = client.post(f"/api/sets/{sid}/publish-draft", json={})
+                r = client.post(f"/api/sets/{sid}/publish", json={})
                 check("second real publish blocked 409",
                       r.status_code == 409, str(r.status_code))
                 with open(tpng, "rb") as fh:
@@ -244,11 +244,11 @@ def main():
                             content_type="multipart/form-data")
 
             def boom(**kw):
-                raise RuntimeError("Shopify draft create failed (HTTP 500)")
-            shopify_api.create_draft_product = boom
+                raise RuntimeError("Shopify product create failed (HTTP 500)")
+            shopify_api.create_live_product = boom
             shopify_api.authenticated = lambda: True
             try:
-                r = client.post(f"/api/sets/{sid2}/publish-draft", json={})
+                r = client.post(f"/api/sets/{sid2}/publish", json={})
                 check("publish failure -> 502", r.status_code == 502,
                       str(r.status_code))
                 r = client.get("/api/sets")
@@ -259,7 +259,7 @@ def main():
             finally:
                 shopify_api.authenticated = orig_auth
         finally:
-            shopify_api.create_draft_product = orig_create
+            shopify_api.create_live_product = orig_create
 
         print("== 8. Upload validation rejections ==")
         r = client.post("/api/sets", json={"name": "Empty Set"})
@@ -268,7 +268,7 @@ def main():
             client.post(f"/api/sets/{sid_empty}/upload",
                         data={"design": (fh, "design.png")},
                         content_type="multipart/form-data")
-        r = client.post(f"/api/sets/{sid_empty}/publish-draft",
+        r = client.post(f"/api/sets/{sid_empty}/publish",
                         json={"dry_run": True})
         check("empty set publish blocked",
               r.status_code == 400, str(r.status_code))

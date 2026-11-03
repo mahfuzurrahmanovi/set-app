@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ view.name }} - Designer - Set App</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<nav class="nav"><a href="/campaigns">Campaigns</a><a href="/campaigns/{{ view.id }}">Campaign settings</a><button class="secondary" onclick="doLogout()">Log out</button></nav>
+<h1>Designer: {{ view.name }}</h1>
+<p><small>Publish goes LIVE immediately, with no draft review step. Preview what will be published before you tap Publish.</small></p>
+<div class="card" id="authBanner" style="display:none">
+  <p class="warn" id="authBannerText"></p>
+</div>
+
+<div class="card" id="loginCard" style="display:none">
+  <h2>Log in</h2>
+  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
+  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
+  <button onclick="doLogin()">Log in</button>
+  <div id="loginResult"></div>
+</div>
+
+
+<div id="pickColorsModal">
+  <div class="card">
+    <h2 id="pickColorsTitle">Pick colors</h2>
+    <p><small>Available colors</small></p>
+    <button class="secondary" onclick="pickColorsSelectAll()">Select All</button>
+    <div id="pickColorsAvailable" class="colorGrid"></div>
+    <p><small>Selected colors</small></p>
+    <div id="pickColorsSelected"></div>
+    <label>Default color</label><select id="pickColorsDefault"></select>
+    <div class="row">
+      <button class="secondary" onclick="closePickColors()">Cancel</button>
+      <button onclick="savePickColors()">Save</button>
+    </div>
+    <div id="pickColorsResult"></div>
+  </div>
+</div>
+
+
+<div class="card topbar">
+  <h2 id="topSetName">No set open</h2>
+  <p id="draftLine"><small>Open a set to start.</small></p>
+  <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
+  <div class="row">
+    <button class="secondary" onclick="saveAll()">Save</button>
+    <button onclick="publishLive()">Publish to Shopify (live)</button>
+  </div>
+  <div class="row">
+    <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
+    <button class="secondary" onclick="doLogout()">Log out</button>
+  </div>
+  <div id="publishStatus"></div>
+  <p><small>Save stores everything: placement, details, colours, sizes and prices. Publish goes LIVE immediately, with no draft review step. Preview above first. Ovi fulfils orders manually.</small></p>
+</div>
+
+
+<div class="editor">
+  <div class="card">
+    <h2>Design</h2>
+    <div class="tabs">
+      <button id="tabFront" class="active" onclick="setViewSide('front')">FRONT</button>
+      <button id="tabBack" class="secondary" onclick="setViewSide('back')">BACK</button>
+    </div>
+    <div class="mockupWrap" id="centreWrap">
+      <div id="centreEmpty"><p style="padding:20px"><small>Open a set to see its product photo with the dashed placement box. Upload a design to see it placed on the photo.</small></p></div>
+      <img id="centreImg" alt="Product mockup" style="display:none;cursor:pointer" onclick="tapToPlace(event)" onload="positionPlaceBox()">
+      <div class="placebox" id="placeBox" style="display:none"></div>
+    </div>
+    <p><small>Tap the mockup to move the placement box there.</small></p>
+    <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
+    <div id="previewAllResult"></div>
+    <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
+    <p id="artworkSpec"><small>No design uploaded yet.</small></p>
+    <p><small>Design rule: transparent PNG only, no background. 150 DPI minimum for sharp prints (estimate at a 12 inch print width).</small></p>
+    <h2>Layers</h2>
+    <p><small>One design across the whole set, plus text layers. Eye hides a layer. "This product" hides it on the selected product only. "All products" deletes a text layer everywhere.</small></p>
+    <div id="layersList"><small>Open a set to see layers.</small></div>
+    <details id="layerFormDetails"><summary>Add a text layer</summary>
+      <label>Text</label><input id="layerText" placeholder="e.g. GO DUCKS">
+      <label>Font</label><select id="layerFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
+      <label>Size (pixels)</label><input id="layerSize" inputmode="numeric" value="120">
+      <label>Colour</label><input type="color" id="layerColour" value="#111111">
+      <label>Lettercase</label><select id="layerCase"><option value="none">As typed</option><option value="upper">UPPERCASE</option><option value="lower">lowercase</option></select>
+      <label>Rotation (degrees, -180 to 180)</label><input id="layerRotation" inputmode="decimal" value="0">
+      <label>Opacity (0 to 100%)</label><input type="range" id="layerOpacity" min="0" max="100" value="100">
+      <label>Left / right <span id="layerXVal">0.50</span></label><input type="range" id="layerX" min="0" max="1" step="0.01" value="0.5" oninput="document.getElementById('layerXVal').textContent=(+this.value).toFixed(2)">
+      <label>Up / down <span id="layerYVal">0.47</span></label><input type="range" id="layerY" min="0" max="1" step="0.01" value="0.47" oninput="document.getElementById('layerYVal').textContent=(+this.value).toFixed(2)">
+      <button class="secondary" id="layerSubmitBtn" onclick="addTextLayer()">Add text layer</button>
+      <button class="secondary" id="layerCancelBtn" style="display:none" onclick="cancelLayerEdit()">Cancel edit</button>
+      <div id="layerResult"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2 id="productsHeader">PRODUCTS (0)</h2>
+    <div class="row">
+      <button class="secondary" onclick="refreshSelectedProduct()">Refresh</button>
+      <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    </div>
+    <div id="products"><small>No set selected yet. Create a set first.</small></div>
+    <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    <button onclick="publishLive()">Publish to Shopify (live)</button>
+  </div>
+</div>
+
+
+<div class="card">
+  <h2>Upload design</h2>
+  <p><small>First file replaces this set's design. Each extra file creates a duplicate of this set with that file as its design.</small></p>
+  <input type="file" id="designFile" accept="image/*" multiple>
+  <button onclick="uploadDesign()">Upload</button>
+  <div id="uploadResult"></div>
+</div>
+
+
+<div class="card">
+  <h2>Master placement</h2>
+  <p><small>Place once on the first product. Every locked product follows this. The dashed box on the mockup shows this placement.</small></p>
+  <label>Left / right <span id="xVal">0.50</span></label>
+  <input type="range" id="x" min="0" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <label>Up / down <span id="yVal">0.45</span></label>
+  <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
+  <label>Size <span id="sVal">0.50</span></label>
+  <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <label>Angle <span id="angleVal">0</span></label>
+  <input type="range" id="angle" min="-180" max="180" step="1" value="0" oninput="showVals()">
+  <div class="row">
+    <button class="secondary" onclick="aidCenterH()">Center left / right</button>
+    <button class="secondary" onclick="aidCenterV()">Center up / down</button>
+  </div>
+  <button class="secondary" onclick="aidScaleToFit()">Scale to fit + center</button>
+  <p><small>These buttons move the sliders. Tap "Save master placement" after.</small></p>
+  <button onclick="saveMaster()">Save master placement</button>
+  <div id="masterResult"></div>
+</div>
+
+
+<div class="card" id="pickerCard">
+  <h2>Add products</h2>
+  <p><small>Search the store, or add by product ID. Members already in the set show "In set".</small></p>
+  <label>Search products</label>
+  <input id="productSearch" placeholder="Search by name, e.g. Oregon hoodie" oninput="debouncedSearch()">
+  <label>Sort results</label>
+  <select id="searchSort" onchange="rerenderSearch()"><option value="none">As found</option><option value="asc">Price: low to high</option><option value="desc">Price: high to low</option></select>
+  <button onclick="searchProducts()">Search</button>
+  <div id="searchResults"></div>
+  <label>Add by product ID</label>
+  <input id="productId" placeholder="Product ID, e.g. 15469998538906">
+  <button onclick="addProduct()">Add product</button>
+</div>
+
+
+<div class="card">
+  <h2>Catalog products</h2>
+  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet. Catalog templates have no price yet, so they cannot be sorted by price.</small></p>
+  <div id="catalogList"><small>Loading catalog...</small></div>
+</div>
+
+
+<div class="card">
+  <h2>Variants and publish</h2>
+  <div id="variantCount"><small>Open a set to see variant counts.</small></div>
+  <label>Grouping</label><div class="row"><button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button><button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button></div><button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
+  <button onclick="publishLive()">Publish to Shopify (live)</button>
+  <div id="publishResult"></div>
+  <p><small>Publish goes LIVE immediately, with no draft review step. Preview above first. Ovi fulfils orders manually. Profit is not shown or checked here: Shopify already has profit.</small></p>
+</div>
+
+
+<script src="/static/app.js"></script>
+<script>
+checkAuth();
+loadSetById('{{ view.id }}').then(function() {
+  const mp = currentSet.master_placement || {};
+  const setVal = function(id, v) { const e = document.getElementById(id); if (e) e.value = v; };
+  setVal('x', (mp.x === undefined ? 0.5 : mp.x));
+  setVal('y', (mp.y === undefined ? 0.45 : mp.y));
+  setVal('s', (mp.scale === undefined ? 0.5 : mp.scale));
+  setVal('angle', (mp.angle === undefined ? 0 : mp.angle));
+  setVal('layerX', (mp.x === undefined ? 0.5 : mp.x));
+  setVal('layerY', (mp.y === undefined ? 0.47 : mp.y));
+  showVals(); clearDirty(); updateCurrentSetLine(); renderProducts();
+  fillCampaignSettings(); renderVariantCount(); renderPublishStatus(); renderDraftLine();
+  renderCentreMockup(); renderArtworkSpec(); renderLayers(); loadCatalogTemplates();
+}).catch(function(e) { alert(e.message); });
+</script>
+</body>
+</html>

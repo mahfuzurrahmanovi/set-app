@@ -149,10 +149,10 @@ def main():
               [p["product_id"] for p in r.get_json()["products"]])
         r = client.post(f"/api/sets/{sid}/products/{pid80}/remove", json={})
         check("re-remove 404", r.status_code == 404)
-        # Published-draft guard: flip state in the TEST copy only.
+        # Published guard: flip state in the TEST copy only.
         with open(app_module.DATA_FILE) as f:
             sets = json.load(f)
-        sets[sid]["publish_state"] = "published_draft"
+        sets[sid]["publish_state"] = "published"
         with open(app_module.DATA_FILE, "w") as f:
             json.dump(sets, f)
         r = client.post(
@@ -323,7 +323,7 @@ def main():
                             content_type="multipart/form-data")
         check("design re-uploaded for guard test",
               r.status_code == 200, str(r.status_code))
-        r = client.post(f"/api/sets/{sid}/publish-draft",
+        r = client.post(f"/api/sets/{sid}/publish",
                         json={"dry_run": True})
         # Gearlaunch flow (2026-11-03): profit removed, Shopify owns
         # profit, so a price below base cost no longer blocks.
@@ -338,22 +338,19 @@ def main():
               and mine["master_placement"]["scale"] == 0.5)
 
         print("== 10. Editor JS syntax ==")
-        html = open(os.path.join(
+        js_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "server", "templates", "index.html")).read()
-        scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-        check("exactly one script block", len(scripts) == 1)
-        tmp_js = os.path.join(tmp, "editor.js")
-        with open(tmp_js, "w") as f:
-            f.write(scripts[0])
-        proc = subprocess.run(["node", "--check", tmp_js],
+            "server", "static", "app.js")
+        proc = subprocess.run(["node", "--check", js_path],
                               capture_output=True, text=True)
         check("editor JS passes node --check", proc.returncode == 0,
               proc.stderr[:300])
+        html = open(os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "server", "templates", "designer.html")).read()
         check("editor HTML has Gearlaunch markers",
               all(m in html for m in
-                  ["placeBox", "detailSlug", "saveDraft", "FRONT",
-                   "Default color", "Add products"]))
+                  ["placeBox", "FRONT", "Default color", "Add products"]))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     real_hash_after = sha(REAL_SETS)

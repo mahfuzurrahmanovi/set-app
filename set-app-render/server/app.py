@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import requests
-from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session
 
 import shopify as shopify_api
 from catalog import TEMPLATES, get_template, template_entry
@@ -556,8 +556,8 @@ def absolute_url(path):
     return base.rstrip("/") + path
 
 
-def build_draft_payloads(set_obj):
-    """Shopify draft product payloads for a set (combine or split).
+def build_product_payloads(set_obj):
+    """Shopify product payloads for a set (combine or split, live).
 
     Images are absolute mockup URLs when a public app URL is
     configured; otherwise images are omitted (recorded honestly in
@@ -662,9 +662,46 @@ def build_draft_payloads(set_obj):
     }]
 
 
+def _page_authed():
+    password = get_app_password()
+    return password is None or bool(session.get("app_authed"))
+
+
 @app.route("/")
 def index():
-    return send_from_directory(app.template_folder, "index.html")
+    return redirect("/campaigns")
+
+
+@app.route("/campaigns")
+def campaigns_page():
+    if not _page_authed():
+        return render_template("login.html", next="/campaigns")
+    sets = load_sets()
+    rows = [campaign_summary(sets[k]) for k in sorted(sets)]
+    return render_template("campaigns.html", rows=rows)
+
+
+@app.route("/campaigns/<sid>")
+def campaign_settings_page(sid):
+    if not _page_authed():
+        return render_template("login.html", next=f"/campaigns/{sid}")
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    return render_template("campaign_settings.html",
+                           view=campaign_view(sets[sid]))
+
+
+@app.route("/campaigns/<sid>/designer")
+def campaign_designer_page(sid):
+    if not _page_authed():
+        return render_template(
+            "login.html", next=f"/campaigns/{sid}/designer")
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    return render_template("designer.html",
+                           view=campaign_view(sets[sid]))
 
 
 @app.route("/auth/shopify")
@@ -1293,15 +1330,15 @@ def set_product_colors(sid, pid):
 def remove_product(sid, pid):
     """Remove a product from the set (the trash icon).
 
-    Blocked once the set is published as a draft: the draft already
+    Blocked once the set is published live: the live listing already
     lists the product, so duplicate the set instead of editing it.
     """
     sets = load_sets()
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
-    if sets[sid].get("publish_state") == "published_draft":
+    if sets[sid].get("publish_state") == "published":
         return jsonify({
-            "error": "This set is already published as a draft. "
+            "error": "This set is already published live. "
                      "Duplicate the set to change its products."
         }), 409
     before = len(sets[sid]["products"])
@@ -1337,7 +1374,7 @@ def set_details(sid):
     """Title (max 255), URL slug, description, tags, combine/split.
 
     Every save stamps draft_saved_at: the set is a saved draft, not a
-    published product. Publishing stays draft-only via /publish-draft.
+    published product. Publishing is direct (live) via /publish.
     """
     body = request.get_json(force=True) or {}
     sets = load_sets()
@@ -1379,9 +1416,9 @@ def set_details(sid):
 def save_draft(sid):
     """Explicit Save Draft: stamps draft_saved_at, changes nothing else.
 
-    The set remains a draft, not a published product. This is the
+    The set remains a local draft, not a published product. This is the
     Gearlaunch "Save and exit" equivalent; publishing is separate and
-    draft-only.
+    direct (live).
     """
     sets = load_sets()
     if sid not in sets:
@@ -1743,7 +1780,7 @@ def _find_layer(set_obj, lid):
 def remove_design(sid):
     """Remove the design from the whole set (text layers stay).
 
-    Blocked once the artwork is locked after a real draft publish.
+    Blocked once the artwork is locked after a real publish.
     """
     sets = load_sets()
     if sid not in sets:
@@ -2029,10 +2066,12 @@ def publish_checklist(set_obj, payloads):
     return rows
 
 
-@app.route("/api/sets/<sid>/publish-draft", methods=["POST"])
-def publish_draft(sid):
-    """Publish a set to Shopify as DRAFT products only, never live.
+@app.route("/api/sets/<sid>/publish", methods=["POST"])
+def publish_live(sid):
+    """Publish a set to Shopify as LIVE/ACTIVE products, immediately.
 
+    DIRECT PUBLISH (Ovi, 2026-11-03 21:30): there is no draft review
+    step. Tapping Publish creates visible, buyable products at once.
     Guards, in order: already published; no design uploaded; products
     missing colours/sizes/price; variant-limit guard; stale mockups
     (real publish only). No profit guard: Shopify already owns profit,
@@ -2040,7 +2079,7 @@ def publish_draft(sid):
     {"dry_run": true} returns
     the planned payloads plus warnings and a per-product checklist,
     without calling Shopify and without changing publish state.
-    A real publish records publish_state "published_draft" and locks
+    A real publish records publish_state "published" and locks
     the artwork (design uploads are then rejected until the set is
     duplicated). Failures never leave "launching" stuck: the state
     becomes "failed" with the partial progress saved, and a retry
@@ -2053,9 +2092,9 @@ def publish_draft(sid):
         return jsonify({"error": "set not found"}), 404
     s = sets[sid]
     dry_run = bool(body.get("dry_run"))
-    if not dry_run and s.get("publish_state") == "published_draft":
+    if not dry_run and s.get("publish_state") == "published":
         return jsonify({
-            "error": "This set is already published as a draft. "
+            "error": "This set is already published live. "
                      "Duplicate the set to publish a new version."
         }), 409
     if not s.get("design_url"):
@@ -2092,7 +2131,7 @@ def publish_draft(sid):
                 "error": "Split mode: one listing per product. Over the "
                          "100-variant limit: " + ", ".join(over),
             }), 400
-    payloads = build_draft_payloads(s)
+    payloads = build_product_payloads(s)
     warnings = []
     skipped = [(p.get("title") or p["product_id"],
                 skipped_pair_count(p))
@@ -2105,7 +2144,7 @@ def publish_draft(sid):
             + ", ".join(f"{t} ({n})" for t, n in skipped) + ".")
     if not shopify_api.public_url():
         warnings.append(
-            "No public app URL is configured, so published drafts will "
+            "No public app URL is configured, so published products will "
             "have no images. Set APP_PUBLIC_URL and re-publish.")
     stale = [p.get("title") or p["product_id"]
              for p in s.get("products", [])
@@ -2134,16 +2173,16 @@ def publish_draft(sid):
                         warnings.append(
                             f"A Shopify product called "
                             f"'{payload['title']}' already exists. "
-                            f"Publishing creates a NEW draft; it does "
+                            f"Publishing creates NEW live products; it does "
                             f"not update the existing listing.")
             except RuntimeError:
                 warnings.append(
                     "Could not check for existing titles (Shopify "
-                    "search failed); publishing still creates new drafts.")
+                    "search failed); publishing still creates new live products.")
         elif s.get("grouping", "combine") == "split":
             warnings.append(
                 "Shopify is not connected, so the existing-title check "
-                "was skipped; publishing creates new drafts.")
+                "was skipped; publishing creates new live products.")
         return jsonify({
             "dry_run": True,
             "grouping": s.get("grouping", "combine"),
@@ -2152,7 +2191,8 @@ def publish_draft(sid):
             "products": payloads,
             "warnings": warnings,
             "checklist": publish_checklist(s, payloads),
-            "note": "Nothing was created in Shopify. This is a preview only.",
+            "note": "Nothing was created in Shopify. This is a preview only. "
+                    "A real publish creates LIVE products immediately.",
         })
     if not shopify_api.authenticated():
         return jsonify({
@@ -2172,7 +2212,7 @@ def publish_draft(sid):
     try:
         for index in range(start_index, len(payloads)):
             payload = payloads[index]
-            made = shopify_api.create_draft_product(
+            made = shopify_api.create_live_product(
                 title=payload["title"],
                 description=payload["description"],
                 tags=payload["tags"],
@@ -2181,11 +2221,11 @@ def publish_draft(sid):
                 images=payload["images"],
             )
             status = (made or {}).get("status")
-            if status != "draft":
+            if status != "active":
                 raise RuntimeError(
                     "Shopify returned product "
                     f"{(made or {}).get('id')} with status "
-                    f"'{status}' instead of draft. It was NOT counted "
+                    f"'{status}' instead of active. It was NOT counted "
                     f"as published; check it in Shopify admin, delete "
                     f"it if needed, then publish again.")
             created.append({
@@ -2204,7 +2244,7 @@ def publish_draft(sid):
                                 "next_index": len(created)}
         save_sets(sets)
         return jsonify({"error": str(exc)}), 502
-    s["publish_state"] = "published_draft"
+    s["publish_state"] = "published"
     s["publish_error"] = None
     s["artwork_locked"] = True
     s["publish_partial"] = None
@@ -2218,7 +2258,7 @@ def publish_draft(sid):
     save_sets(sets)
     return jsonify({
         "published": True,
-        "state": "published_draft",
+        "state": "published",
         "shopify_ids": s["publish_record"]["shopify_ids"],
     })
 
@@ -2228,18 +2268,18 @@ def create_set_page(sid):
     """Create a HIDDEN Shopify Page for a published set.
 
     Title = set name, body = description + one linked block per
-    created draft (title link + image). published_at is null, so the
-    page stays hidden until Ovi publishes it in Shopify admin. The
-    app never publishes the page live. A second create is rejected:
+    created live product (title link + image). published_at is null,
+    so the page stays hidden until Ovi publishes it in Shopify admin.
+    The app never publishes the page live. A second create is rejected:
     the page already exists (its id is in the publish record).
     """
     sets = load_sets()
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
     s = sets[sid]
-    if s.get("publish_state") != "published_draft":
+    if s.get("publish_state") != "published":
         return jsonify({
-            "error": "Publish the set as a draft first, then create "
+            "error": "Publish the set first, then create "
                      "its page."
         }), 400
     record = s.get("publish_record") or {}
@@ -2295,7 +2335,7 @@ def create_set_page(sid):
 def upload_design(sid):
     """Upload + validate a design. Rejects non-transparent files.
 
-    After a real draft publish the artwork is locked and uploads
+    After a real publish the artwork is locked and uploads
     return 409 (duplicate the set to change the design). A new design
     makes every rendered mockup stale, so all mockup lists and
     mockup-URL heroes are cleared (files are deleted only when no

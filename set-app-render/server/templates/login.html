@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in - Set App</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<h1>Set App</h1>
+<div class="card">
+  <h2>Log in</h2>
+  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
+  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
+  <button onclick="doLoginPage()">Log in</button>
+  <div id="loginResult"></div>
+</div>
+<script>
+async function doLoginPage() {
+  const pw = document.getElementById('loginPassword').value;
+  const box = document.getElementById('loginResult');
+  try {
+    const tr = await fetch('/api/csrf-token'); const tj = await tr.json();
+    const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': tj.csrf_token}, body: JSON.stringify({ password: pw }) });
+    const j = await r.json();
+    if (!r.ok) { box.innerHTML = '<p class="warn">' + (j.error || 'Login failed.') + '</p>'; return; }
+    const params = new URLSearchParams(window.location.search);
+    const serverNext = {{ next | default('/campaigns') | tojson }};
+    window.location.href = params.get('next') || serverNext || '/campaigns';
+  } catch (e) { box.innerHTML = '<p class="warn">Login failed. Try again.</p>'; }
+}
+</script>
+</body>
+</html>

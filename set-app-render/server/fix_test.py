@@ -176,7 +176,9 @@ def main():
             shopify_api.get_product_image = orig
 
         print("== 6. Mockup order: visible block + reorder works ==")
-        html = client.get("/").get_data(as_text=True)
+        html = open(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "static", "app.js")).read()
         check("served template contains visible Mockup order block",
               "Mockup order" in html)
         check("served template gates reorder on 2+ mockups",

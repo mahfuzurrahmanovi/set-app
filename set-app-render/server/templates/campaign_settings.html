@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ view.name }} - Campaign settings - Set App</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<nav class="nav"><a href="/campaigns">Campaigns</a><a href="/campaigns/{{ view.id }}/designer">Designer</a><button class="secondary" onclick="doLogout()">Log out</button></nav>
+
+<div class="card" id="authBanner" style="display:none">
+  <p class="warn" id="authBannerText"></p>
+</div>
+
+<div class="card" id="loginCard" style="display:none">
+  <h2>Log in</h2>
+  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
+  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
+  <button onclick="doLogin()">Log in</button>
+  <div id="loginResult"></div>
+</div>
+
+<div class="card">
+  <h2 id="campHeaderName">{{ view.name }}</h2>
+  <p><span class="pill" id="campStatusPill">{{ view.campaign.status.upper() }}</span></p>
+  <div class="row">
+    <button class="secondary" onclick="window.location.href='/campaigns/{{ view.id }}/designer'">Designer</button>
+    <button class="danger" onclick="deleteSet('{{ view.id }}')">Delete campaign</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Details</h2>
+  <label>Name</label><input id="campName" value="{{ view.name }}">
+  <label>URL path</label>
+  <p><small>URL path: <span id="campUrlPreview">fansfit.shop/{{ view.slug }}</span></small></p>
+  <input id="campSlug" value="{{ view.slug }}" placeholder="e.g. mind">
+  <label>Tags</label><input id="campTags" value="{{ view.tags | join(', ') }}" placeholder="Add a tag">
+</div>
+
+<div class="card">
+  <h2>Storefront</h2>
+  <label><input type="checkbox" id="campStorefrontHomepage" {% if view.campaign.storefront_homepage %}checked{% endif %}> Add campaign to storefront homepage</label>
+</div>
+
+<div class="card">
+  <h2>Conversion tools</h2>
+  <label><input type="checkbox" id="campShowCountdown" {% if view.campaign.show_countdown %}checked{% endif %}> Display countdown timer</label>
+  <label><input type="checkbox" id="campHidePurchases" {% if view.campaign.hide_purchases %}checked{% endif %}> Hide # of purchases</label>
+  <label>Fudge factor</label><input id="campFudge" inputmode="numeric" value="{{ view.campaign.fudge_factor }}">
+</div>
+
+<div class="card">
+  <h2>Cloak &amp; Dagger</h2>
+  <label><input type="checkbox" id="campHideSearch" {% if view.campaign.hide_from_search_engines %}checked{% endif %}> Hide from search engines</label>
+  <label><input type="checkbox" id="campSocialButtons" {% if view.campaign.social_buttons %}checked{% endif %}> Social buttons on campaign landing page</label>
+</div>
+
+<div class="card">
+  <h2>Upsells</h2>
+  <label>Upsell discount</label><input id="campUpsell" inputmode="decimal" placeholder="e.g. 2.00" value="{{ view.campaign.upsell_discount if view.campaign.upsell_discount is not none else '' }}">
+</div>
+
+<div class="card">
+  <h2>Tik Tok Pixel</h2>
+  <label>Tik Tok Pixel</label><input id="campTiktok" placeholder="Pixel ID" value="{{ view.campaign.tiktok_pixel }}">
+</div>
+
+<div class="card">
+  <h2>Snapchat Pixel</h2>
+  <label>Snapchat Pixel</label><input id="campSnapchat" placeholder="Pixel ID" value="{{ view.campaign.snapchat_pixel }}">
+</div>
+
+<div class="card">
+  <h2>Override default pixels</h2>
+  <p><small>New Facebook pixel</small></p>
+  <label>Custom Audience</label><input id="campFbAudience" placeholder="Custom Audience" value="{{ view.campaign.facebook.custom_audience }}">
+  <label>Conversions API access token</label><input id="campFbCapi" placeholder="Access token" value="{{ view.campaign.facebook.conversions_api_token }}">
+  <p><small>Old Facebook pixels</small></p>
+  <label>Key Page View (land on buy page)</label><input id="campFbPageView" placeholder="Pixel ID" value="{{ view.campaign.facebook.page_view_pixel }}">
+  <label>Add to Cart (add to cart)</label><input id="campFbAddToCart" placeholder="Pixel ID" value="{{ view.campaign.facebook.add_to_cart_pixel }}">
+  <label>Checkout (convert to sale)</label><input id="campFbCheckout" placeholder="Pixel ID" value="{{ view.campaign.facebook.checkout_pixel }}">
+</div>
+
+<div class="card">
+  <h2>End date</h2>
+  <label>End (optional, e.g. 3/1/26)</label><input id="campEnd" placeholder="e.g. 3/1/26" value="{{ view.campaign.end_date or '' }}">
+</div>
+
+<div class="card">
+  <h2>Description</h2>
+  <label>Description</label><textarea id="campDesc" rows="6" placeholder="Campaign description">{{ view.description }}</textarea>
+  <button class="secondary" onclick="useHowToOrder()">Use How To Order text</button>
+  <button onclick="saveCampaignSettings()">Save campaign settings</button>
+  <div id="campaignSettingsResult"></div>
+  <p><small>These settings are stored in the app and feed the hidden set page only. Profit is not shown here: Shopify already has profit.</small></p>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+checkAuth();
+loadSetById('{{ view.id }}').then(function() { fillCampaignSettings(); }).catch(function(e) { alert(e.message); });
+</script>
+</body>
+</html>

@@ -366,7 +366,7 @@ def main():
              "base_cost": "10"},
         ]})
     # Dry-run must warn about the stale mockup, not fail.
-    r = post(f"/api/sets/{sid}/publish-draft", {"dry_run": True})
+    r = post(f"/api/sets/{sid}/publish", {"dry_run": True})
     j = r.get_json()
     check("dry-run warns on stale mockup",
           r.status_code == 200
@@ -435,10 +435,10 @@ def main():
         calls.append(kw)
         if len(calls) == 2:
             raise RuntimeError("Shopify hiccup on second product")
-        return {"id": 100 + len(calls), "status": "draft",
+        return {"id": 100 + len(calls), "status": "active",
                 "handle": "fix3-" + str(len(calls))}
-    shopify_api.create_draft_product = mock_create_fail_second
-    r = post(f"/api/sets/{sid}/publish-draft", {})
+    shopify_api.create_live_product = mock_create_fail_second
+    r = post(f"/api/sets/{sid}/publish", {})
     j = r.get_json()
     check("publish failure returns 502, not stuck launching",
           r.status_code == 502, str(r.status_code))
@@ -450,10 +450,10 @@ def main():
           and len(mine["publish_partial"]["created"]) == 1,
           str(mine.get("publish_partial")))
     # Resume: only the remaining payloads are created, no duplicates.
-    shopify_api.create_draft_product = lambda **kw: (
+    shopify_api.create_live_product = lambda **kw: (
         calls.append(kw) or {"id": 200 + len(calls),
-                             "status": "draft", "handle": "fix3-r"})
-    r = post(f"/api/sets/{sid}/publish-draft", {})
+                             "status": "active", "handle": "fix3-r"})
+    r = post(f"/api/sets/{sid}/publish", {})
     j = r.get_json()
     check("resume publish succeeds",
           r.status_code == 200, str(r.status_code))
@@ -466,14 +466,14 @@ def main():
           str(mine.get("publish_record")))
     r = client.get("/api/sets")
     mine = [s for s in r.get_json() if s["id"] == sid][0]
-    check("published_draft + artwork locked after resume",
-          mine["publish_state"] == "published_draft"
+    check("published + artwork locked after resume",
+          mine["publish_state"] == "published"
           and mine["artwork_locked"] is True)
     # Second real publish blocked.
-    r = post(f"/api/sets/{sid}/publish-draft", {})
+    r = post(f"/api/sets/{sid}/publish", {})
     check("second real publish blocked",
           r.status_code == 409, str(r.status_code))
-    # Draft-status verification: a fresh set whose mock returns "active".
+    # Non-active-status verification: a fresh set whose mock returns "draft".
     sid2 = seed_set("fix3-set2")
     with open(good, "rb") as f:
         client.post(f"/api/sets/{sid2}/upload", headers={
@@ -496,14 +496,14 @@ def main():
     post(f"/api/sets/{sid2}/mockups",
          {"design": sets_now[sid2]["design_url"],
           "photos": {"111": photo_url, "222": photo_url}})
-    shopify_api.create_draft_product = lambda **kw: {
-        "id": 9999, "status": "active", "handle": "bad"}
-    r = post(f"/api/sets/{sid2}/publish-draft", {})
-    check("non-draft status rejected with 502",
+    shopify_api.create_live_product = lambda **kw: {
+        "id": 9999, "status": "draft", "handle": "bad"}
+    r = post(f"/api/sets/{sid2}/publish", {})
+    check("non-active status rejected with 502",
           r.status_code == 502, str(r.status_code))
     r = client.get("/api/sets")
     mine2 = [s for s in r.get_json() if s["id"] == sid2][0]
-    check("non-draft product not counted as published",
+    check("non-active product not counted as published",
           mine2["publish_state"] == "failed"
           and not mine2["artwork_locked"])
 
@@ -540,7 +540,7 @@ def main():
          {"design": [s for s in client.get("/api/sets").get_json()
                      if s["id"] == sid3][0]["design_url"],
           "photos": {"111": photo_url, "222": photo_url}})
-    r = post(f"/api/sets/{sid3}/publish-draft", {"dry_run": True})
+    r = post(f"/api/sets/{sid3}/publish", {"dry_run": True})
     j = r.get_json()
     payload = (j.get("products") or [{}])[0]
     variants = payload.get("variants") or []
@@ -684,7 +684,7 @@ def main():
     check("missing set export is JSON 404, not HTML",
           r.status_code == 404
           and r.is_json, str(r.status_code))
-    r = client.post("/api/sets/does-not-exist/publish-draft",
+    r = client.post("/api/sets/does-not-exist/publish",
                     headers={"Content-Type": "application/json",
                              "X-CSRF-Token": token},
                     data=json.dumps({}))
@@ -722,23 +722,26 @@ def main():
 
     # ---- 12. Editor UI markers ----
     print("== 12. Editor UI markers ==")
-    html = open(os.path.join(
+    html = ""
+    for _f in ("campaigns.html", "campaign_settings.html", "designer.html"):
+        html += open(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "templates", _f)).read()
+    html += open(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "templates", "index.html")).read()
+        "static", "app.js")).read()
     for marker in ["loginCard", "saveAll()", "dirtyNote",
                    "previewAllMockups", "tapToPlace", "createSetPage",
                    "downloadSetJson", "defcol-", "layerX",
                    "Hero is the first Shopify image",
                    "Default color", "angle"]:
         check(f"UI has {marker}", marker in html)
-    import re as _re
-    scripts = _re.findall(r"<script>(.*?)</script>", html, _re.S)
-    check("exactly one editor script block", len(scripts) == 1)
-    tmp_js = os.path.join(TMP, "editor.js")
-    with open(tmp_js, "w") as f:
-        f.write(scripts[0])
     import subprocess
-    proc = subprocess.run(["node", "--check", tmp_js],
+    js_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "app.js")
+    check("editor JS is a single shared file", os.path.exists(js_path))
+    proc = subprocess.run(["node", "--check", js_path],
                           capture_output=True, text=True)
     check("editor JS passes node --check", proc.returncode == 0,
           proc.stderr[:300])
@@ -797,7 +800,7 @@ def main():
                          if s["id"] == sid_x][0]["design_url"],
               "photos": ({"333": photo_url} if sid_x == "fix3-set4"
                          else {"444": photo_url})})
-    r = post("/api/sets/fix3-set4/publish-draft", {"dry_run": True})
+    r = post("/api/sets/fix3-set4/publish", {"dry_run": True})
     j = r.get_json()
     payload = (j.get("products") or [{}])[0]
     row = (j.get("checklist") or [{}])[0]
@@ -813,7 +816,7 @@ def main():
           any("will not be created" in (w or "")
               for w in (j.get("warnings") or [])),
           str(j.get("warnings")))
-    r = post("/api/sets/fix3-set5/publish-draft", {"dry_run": True})
+    r = post("/api/sets/fix3-set5/publish", {"dry_run": True})
     check("product with no price at all still blocked",
           r.status_code == 400
           and "sale price" in str(r.get_json()),

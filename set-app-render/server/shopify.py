@@ -458,9 +458,12 @@ def create_page(title, body_html):
     return r.json().get("page", {})
 
 
-def create_draft_product(title, description="", tags=None, options=None,
-                         variants=None, images=None):
-    """Create a product in DRAFT status only. Never live.
+def create_live_product(title, description="", tags=None, options=None,
+                        variants=None, images=None):
+    """Create a product in ACTIVE (live) status.
+
+    DIRECT PUBLISH (Ovi, 2026-11-03 21:30): products created here are
+    visible in the store immediately. There is no draft step.
 
     title: product title (max 255 chars, enforced by the caller).
     description: HTML/text body for the listing.
@@ -475,7 +478,7 @@ def create_draft_product(title, description="", tags=None, options=None,
     """
     product = {
         "title": title,
-        "status": "draft",
+        "status": "active",
         "body_html": description or "",
         "tags": ", ".join(tags or []),
     }
@@ -494,9 +497,9 @@ def create_draft_product(title, description="", tags=None, options=None,
             timeout=30,
         )
     except requests.RequestException as exc:
-        raise RuntimeError(f"Shopify draft create failed ({exc})")
+        raise RuntimeError(f"Shopify product create failed ({exc})")
     if r.status_code not in (200, 201):
         raise RuntimeError(
-            f"Shopify draft create failed (HTTP {r.status_code})"
+            f"Shopify product create failed (HTTP {r.status_code})"
         )
     return r.json().get("product", {})

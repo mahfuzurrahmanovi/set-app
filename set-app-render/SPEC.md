@@ -127,8 +127,10 @@ production-ready. Fix round 3 closed the gaps; full test evidence in
   stuck "launching": a failure records state "failed" with partial
   progress, and retrying resumes from the first uncreated product
   instead of duplicating. A Shopify product returned with any status
-  other than draft is rejected, not counted as published. Drafts only,
-  never live. After a successful draft publish the editor offers a
+  other than active is rejected, not counted as published. DIRECT
+  PUBLISH (Ovi, 2026-11-03 21:30): a real publish creates LIVE
+  products immediately, with no draft review step. After a successful
+  live publish the editor offers a
   hidden set-page create (published_at null, not linked anywhere).
 - **Mockup freshness.** Every render stamps the current design version;
   placement, layer and master edits bump it, so an outdated render is
@@ -149,7 +151,7 @@ production-ready. Fix round 3 closed the gaps; full test evidence in
 - **Still not built (deliberate).** Back-side printing, full
   drag-to-place, buyer personalization, orders/fulfilment/billing/sync,
   SQLite migration, fees in profit, layer undo, multi-worker support,
-  set-page theme work. First real draft publish is Ovi's to trigger;
+  set-page theme work. First real live publish is Ovi's to trigger;
   it has only ever been tested with a mock client and dry-run.
 
 ## Gearlaunch-style flow (2026-11-03, local only, not yet deployed)
@@ -165,8 +167,8 @@ supersedes the round-3 negative-profit publish guard.
   campaign with art, name, path, tags, orders (-, the app tracks no
   orders), items, status (draft/active/inactive/locked), fulfillment
   (LAUNCH_END label only, not a real fulfillment mode), end date.
-  On a phone the rows stack; the same columns are shown, not a
-  9-column desktop table.
+  On a phone the table scrolls horizontally (exact Gearlaunch
+  format), not stacked cards.
 - **Campaign settings (per campaign):** name, URL path, tags,
   description (with a How To Order text button), storefront homepage
   toggle, countdown timer + fudge factor, hide # of purchases,
@@ -200,3 +202,19 @@ supersedes the round-3 negative-profit publish guard.
 3. Mobile UI shell (create set, upload, place, unlock, publish).
 4. Shopify wiring (product create/duplicate, image attach, set page).
 5. Deploy + install (token, hosting) + one real test set with Srity.
+
+## Gearlaunch separate pages + direct publish (2026-11-03, local only, NOT deployed)
+Correction to the flow above, after Ovi (21:28) said the stacked
+single page was not user friendly, and (21:30) changed publish to
+direct: the app is now three separate pages, exact Gearlaunch
+format — /campaigns (table, ART/NAME/PATH/TAGS/ORDERS/ITEMS/STATUS/
+FULFILLMENT/END, horizontal scroll on phone), /campaigns/<id>
+(settings cards only), /campaigns/<id>/designer (FRONT/BACK,
+mockup, PRODUCTS, pick-colors modal, upload, placement, picker,
+catalog, variants + Publish). Old index.html deleted; shared CSS/JS
+in server/static/app.css and app.js. Publish is DIRECT: route
+/api/sets/<id>/publish, Shopify status "active", publish_state
+"published", button "Publish to Shopify (live)". Publish goes live
+immediately with no draft review step; preview (dry run) is the
+only safe check. No live profit anywhere. See
+gearlaunch-pages-plan.md and gearlaunch-pages-test-log.md.

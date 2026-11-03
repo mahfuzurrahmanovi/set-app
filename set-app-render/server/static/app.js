@@ -1,307 +1,4 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Set App</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; background: #f6f6f6; }
-  h1 { font-size: 22px; } h2 { font-size: 18px; margin-top: 8px; }
-  input, button, select, textarea { font-size: 17px; padding: 12px; border-radius: 10px; border: 1px solid #ccc; width: 100%; box-sizing: border-box; }
-  button { background: #0f766e; color: #fff; border: none; margin-top: 10px; }
-  button.secondary { background: #fff; color: #111; border: 1px solid #ccc; }
-  button.danger { background: #fff; color: #b91c1c; border: 1px solid #e5a0a0; }
-  .card { background: #fff; border-radius: 12px; padding: 14px; margin-top: 12px; }
-  label { display: block; margin-top: 12px; font-weight: 600; }
-  input[type=range] { padding: 0; }
-  input[type=checkbox] { width: auto; }
-  input[type=color] { padding: 4px; height: 48px; }
-  img.preview { width: 100%; border-radius: 12px; margin-top: 12px; }
-  .row { display: flex; gap: 10px; } .row > * { flex: 1; }
-  small { color: #555; }
-  .warn { color: #b91c1c; font-weight: 700; }
-  .ok { color: #0f766e; font-weight: 700; }
-  .badge { display: inline-block; background: #fef3c7; border-radius: 6px; padding: 2px 8px; font-size: 13px; }
-  details { margin-top: 12px; } details summary { font-weight: 600; padding: 10px 0; cursor: pointer; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .chips label { font-weight: 400; margin-top: 0; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; }
-  .chips label input { width: auto; margin-right: 6px; }
-  /* Gearlaunch-style editor: centre mockup + right products panel. */
-  .topbar { position: sticky; top: 0; z-index: 5; }
-  .topbar .row button { margin-top: 0; }
-  .editor { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; align-items: start; }
-  @media (max-width: 900px) { .editor { grid-template-columns: 1fr; } }
-  .tabs { display: flex; gap: 8px; margin-top: 8px; }
-  .tabs button { margin-top: 0; }
-  .tabs button.active { outline: 3px solid #0f766e; }
-  .mockupWrap { position: relative; margin-top: 12px; background: #eee; border-radius: 12px; min-height: 200px; }
-  .mockupWrap img { width: 100%; border-radius: 12px; display: block; }
-  .placebox { position: absolute; border: 2px dashed #dc2626; border-radius: 4px; pointer-events: none; box-sizing: border-box; }
-  .prodcard { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
-  .prodcard.selected { outline: 3px solid #0f766e; }
-  .prodcard .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #eee; }
-  .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .swatch { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #ccc; display: inline-block; }
-  .iconbtn { width: auto; padding: 8px 12px; margin-top: 8px; }
-  .layerrow { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-  .layerrow > span { flex: 1; }
-  .layerrow button { width: auto; margin-top: 0; padding: 8px 12px; }
-  /* Gearlaunch-style campaigns list: stacked rows on a phone. */
-  .campaignRow { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
-  .campaignRow input[type=checkbox] { width: 22px; height: 22px; margin-top: 4px; }
-  .campaignRow .thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; background: #eee; }
-  .campaignRow button { width: auto; margin-top: 6px; padding: 8px 12px; }
-  .pill { display: inline-block; background: #e0f2fe; border-radius: 20px; padding: 2px 10px; font-size: 13px; font-weight: 700; }
-  .pill.active { background: #dcfce7; } .pill.inactive { background: #e5e5e5; } .pill.locked { background: #fee2e2; }
-  /* Pick colors modal: full phone width, scrollable, Cancel/Save at bottom. */
-  #pickColorsModal { display: none; position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,0.5); padding: 16px; box-sizing: border-box; overflow-y: auto; }
-  #pickColorsModal .card { margin-top: 0; max-height: none; }
-  .colorGrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .colorGrid button { width: auto; margin-top: 0; padding: 10px 14px; }
-  .colorGrid button.sel { outline: 3px solid #0f766e; }
-  .chipX { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; margin: 4px 4px 0 0; }
-  .chipX button { width: auto; margin-top: 0; padding: 2px 8px; }
-</style>
-</head>
-<body>
-<h1>Set App</h1>
-<p><small>Build sets, place one design, publish to the whole set. Phone friendly.</small></p>
 
-<div class="card" id="authBanner" style="display:none">
-  <p class="warn" id="authBannerText"></p>
-</div>
-
-<div class="card" id="loginCard" style="display:none">
-  <h2>Log in</h2>
-  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
-  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
-  <button onclick="doLogin()">Log in</button>
-  <div id="loginResult"></div>
-</div>
-
-<div class="card" id="campaignsCard">
-  <h2>Campaigns</h2>
-  <p><small>Every set is a campaign, like Gearlaunch. Tap a campaign to open its designer, or Settings for its campaign page settings.</small></p>
-  <label>Filter by name, path, tags</label><input id="campaignFilter" placeholder="e.g. golden, mind, warriors" oninput="renderSetList()">
-  <label>New campaign name</label><input id="campaignName" placeholder="e.g. Golden State Of">
-  <button onclick="createCampaign()">Create campaign</button>
-  <div class="row">
-    <button class="secondary" onclick="bulkCampaign('activate')">Activate</button>
-    <button class="secondary" onclick="bulkCampaign('deactivate')">Deactivate</button>
-    <button class="secondary" onclick="bulkCampaign('delete')">Delete</button>
-  </div>
-  <label>Tag for selected campaigns</label><input id="bulkTag" placeholder="e.g. warriors">
-  <button class="secondary" onclick="bulkCampaign('tag')">Tag selected</button>
-  <div id="campaignsList"><small>Loading campaigns...</small></div>
-  <p id="currentSetLine"><small>No set selected yet.</small></p>
-  <p><small>Columns: art, name, path, tags, orders, items, status, fulfillment, end. Orders shows - because this app tracks no orders; Ovi fulfils manually. Profit is not shown here: Shopify already has profit.</small></p>
-</div>
-
-<div id="pickColorsModal">
-  <div class="card">
-    <h2 id="pickColorsTitle">Pick colors</h2>
-    <p><small>Available colors</small></p>
-    <button class="secondary" onclick="pickColorsSelectAll()">Select All</button>
-    <div id="pickColorsAvailable" class="colorGrid"></div>
-    <p><small>Selected colors</small></p>
-    <div id="pickColorsSelected"></div>
-    <label>Default color</label><select id="pickColorsDefault"></select>
-    <div class="row">
-      <button class="secondary" onclick="closePickColors()">Cancel</button>
-      <button onclick="savePickColors()">Save</button>
-    </div>
-    <div id="pickColorsResult"></div>
-  </div>
-</div>
-
-<div class="card topbar">
-  <h2 id="topSetName">No set open</h2>
-  <p id="draftLine"><small>Open a set to start.</small></p>
-  <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
-  <div class="row">
-    <button class="secondary" onclick="saveAll()">Save</button>
-    <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
-  </div>
-  <div class="row">
-    <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
-    <button class="secondary" onclick="doLogout()">Log out</button>
-  </div>
-  <div id="publishStatus"></div>
-  <p><small>Save stores everything: placement, details, colours, sizes and prices. Publish creates DRAFT products only, never live. Ovi fulfils orders manually.</small></p>
-</div>
-
-<div class="editor">
-  <div class="card">
-    <h2>Design</h2>
-    <div class="tabs">
-      <button id="tabFront" class="active" onclick="setViewSide('front')">FRONT</button>
-      <button id="tabBack" class="secondary" onclick="setViewSide('back')">BACK</button>
-    </div>
-    <div class="mockupWrap" id="centreWrap">
-      <div id="centreEmpty"><p style="padding:20px"><small>Open a set to see its product photo with the dashed placement box. Upload a design to see it placed on the photo.</small></p></div>
-      <img id="centreImg" alt="Product mockup" style="display:none;cursor:pointer" onclick="tapToPlace(event)" onload="positionPlaceBox()">
-      <div class="placebox" id="placeBox" style="display:none"></div>
-    </div>
-    <p><small>Tap the mockup to move the placement box there.</small></p>
-    <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
-    <div id="previewAllResult"></div>
-    <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
-    <p id="artworkSpec"><small>No design uploaded yet.</small></p>
-    <p><small>Design rule: transparent PNG only, no background. 150 DPI minimum for sharp prints (estimate at a 12 inch print width).</small></p>
-    <h2>Layers</h2>
-    <p><small>One design across the whole set, plus text layers. Eye hides a layer. "This product" hides it on the selected product only. "All products" deletes a text layer everywhere.</small></p>
-    <div id="layersList"><small>Open a set to see layers.</small></div>
-    <details id="layerFormDetails"><summary>Add a text layer</summary>
-      <label>Text</label><input id="layerText" placeholder="e.g. GO DUCKS">
-      <label>Font</label><select id="layerFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
-      <label>Size (pixels)</label><input id="layerSize" inputmode="numeric" value="120">
-      <label>Colour</label><input type="color" id="layerColour" value="#111111">
-      <label>Lettercase</label><select id="layerCase"><option value="none">As typed</option><option value="upper">UPPERCASE</option><option value="lower">lowercase</option></select>
-      <label>Rotation (degrees, -180 to 180)</label><input id="layerRotation" inputmode="decimal" value="0">
-      <label>Opacity (0 to 100%)</label><input type="range" id="layerOpacity" min="0" max="100" value="100">
-      <label>Left / right <span id="layerXVal">0.50</span></label><input type="range" id="layerX" min="0" max="1" step="0.01" value="0.5" oninput="document.getElementById('layerXVal').textContent=(+this.value).toFixed(2)">
-      <label>Up / down <span id="layerYVal">0.47</span></label><input type="range" id="layerY" min="0" max="1" step="0.01" value="0.47" oninput="document.getElementById('layerYVal').textContent=(+this.value).toFixed(2)">
-      <button class="secondary" id="layerSubmitBtn" onclick="addTextLayer()">Add text layer</button>
-      <button class="secondary" id="layerCancelBtn" style="display:none" onclick="cancelLayerEdit()">Cancel edit</button>
-      <div id="layerResult"></div>
-    </details>
-  </div>
-
-  <div class="card">
-    <h2 id="productsHeader">PRODUCTS (0)</h2>
-    <div class="row">
-      <button class="secondary" onclick="refreshSelectedProduct()">Refresh</button>
-      <button class="secondary" onclick="scrollToPickers()">Add products</button>
-    </div>
-    <div id="products"><small>No set selected yet. Create a set first.</small></div>
-    <button class="secondary" onclick="scrollToPickers()">Add products</button>
-    <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Settings</h2>
-  <p><small>Name, URL, tags and description go on the Shopify listing.</small></p>
-  <label>Title (max 255 characters)</label>
-  <input id="detailName" placeholder="Set title">
-  <label>URL slug (lowercase letters, numbers, hyphens)</label>
-  <input id="detailSlug" placeholder="e.g. oregon-ducks-set">
-  <label>Description</label>
-  <input id="detailDesc" placeholder="General description for the whole set">
-  <label>Tags (comma separated)</label>
-  <input id="detailTags" placeholder="e.g. oregon ducks, fan gift">
-  <label>Grouping</label>
-  <div class="row">
-    <button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button>
-    <button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button>
-  </div>
-  <button onclick="saveDetails()">Save set details</button>
-  <div id="detailResult"></div>
-</div>
-
-<div class="card" id="campaignSettingsCard">
-  <h2>Campaign settings</h2>
-  <p><small>Gearlaunch-style campaign settings for the open set. These are stored in the app and feed the hidden set page only; nothing here publishes anything live.</small></p>
-  <p><small>URL path: <span id="campUrlPreview">fansfit.shop/</span></small></p>
-  <h3>Storefront</h3>
-  <label><input type="checkbox" id="campStorefrontHomepage"> Add campaign to storefront homepage</label>
-  <h3>Conversion tools</h3>
-  <label><input type="checkbox" id="campShowCountdown"> Display countdown timer</label>
-  <label><input type="checkbox" id="campHidePurchases"> Hide # of purchases</label>
-  <label>Fudge factor</label><input id="campFudge" inputmode="numeric" value="0">
-  <h3>Cloak &amp; Dagger</h3>
-  <label><input type="checkbox" id="campHideSearch"> Hide from search engines</label>
-  <label><input type="checkbox" id="campSocialButtons"> Social buttons on campaign landing page</label>
-  <h3>Upsells</h3>
-  <label>Upsell discount</label><input id="campUpsell" inputmode="decimal" placeholder="e.g. 2.00">
-  <h3>Tik Tok Pixel</h3>
-  <label>Tik Tok Pixel</label><input id="campTiktok" placeholder="Pixel ID">
-  <h3>Snapchat Pixel</h3>
-  <label>Snapchat Pixel</label><input id="campSnapchat" placeholder="Pixel ID">
-  <h3>Override default pixels</h3>
-  <p><small>New Facebook pixel</small></p>
-  <label>Custom Audience</label><input id="campFbAudience" placeholder="Custom Audience">
-  <label>Conversions API access token</label><input id="campFbCapi" placeholder="Access token">
-  <p><small>Old Facebook pixels</small></p>
-  <label>Key Page View (land on buy page)</label><input id="campFbPageView" placeholder="Pixel ID">
-  <label>Add to Cart (add to cart)</label><input id="campFbAddToCart" placeholder="Pixel ID">
-  <label>Checkout (convert to sale)</label><input id="campFbCheckout" placeholder="Pixel ID">
-  <h3>End date</h3>
-  <label>End (optional, e.g. 3/1/26)</label><input id="campEnd" placeholder="e.g. 3/1/26">
-  <h3>Description</h3>
-  <label>Description</label><textarea id="campDesc" rows="6" placeholder="Campaign description"></textarea>
-  <button class="secondary" onclick="useHowToOrder()">Use How To Order text</button>
-  <button onclick="saveCampaignSettings()">Save campaign settings</button>
-  <div id="campaignSettingsResult"></div>
-  <button class="secondary" onclick="scrollToDesigner()">Designer</button>
-</div>
-
-<div class="card">
-  <h2>Upload design</h2>
-  <p><small>First file replaces this set's design. Each extra file creates a duplicate of this set with that file as its design.</small></p>
-  <input type="file" id="designFile" accept="image/*" multiple>
-  <button onclick="uploadDesign()">Upload</button>
-  <div id="uploadResult"></div>
-</div>
-
-<div class="card">
-  <h2>Master placement</h2>
-  <p><small>Place once on the first product. Every locked product follows this. The dashed box on the mockup shows this placement.</small></p>
-  <label>Left / right <span id="xVal">0.50</span></label>
-  <input type="range" id="x" min="0" max="1" step="0.01" value="0.5" oninput="showVals()">
-  <label>Up / down <span id="yVal">0.45</span></label>
-  <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
-  <label>Size <span id="sVal">0.50</span></label>
-  <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
-  <label>Angle <span id="angleVal">0</span></label>
-  <input type="range" id="angle" min="-180" max="180" step="1" value="0" oninput="showVals()">
-  <div class="row">
-    <button class="secondary" onclick="aidCenterH()">Center left / right</button>
-    <button class="secondary" onclick="aidCenterV()">Center up / down</button>
-  </div>
-  <button class="secondary" onclick="aidScaleToFit()">Scale to fit + center</button>
-  <p><small>These buttons move the sliders. Tap "Save master placement" after.</small></p>
-  <button onclick="saveMaster()">Save master placement</button>
-  <div id="masterResult"></div>
-</div>
-
-<div class="card" id="pickerCard">
-  <h2>Add products</h2>
-  <p><small>Search the store, or add by product ID. Members already in the set show "In set".</small></p>
-  <label>Search products</label>
-  <input id="productSearch" placeholder="Search by name, e.g. Oregon hoodie" oninput="debouncedSearch()">
-  <label>Sort results</label>
-  <select id="searchSort" onchange="rerenderSearch()"><option value="none">As found</option><option value="asc">Price: low to high</option><option value="desc">Price: high to low</option></select>
-  <button onclick="searchProducts()">Search</button>
-  <div id="searchResults"></div>
-  <label>Add by product ID</label>
-  <input id="productId" placeholder="Product ID, e.g. 15469998538906">
-  <button onclick="addProduct()">Add product</button>
-</div>
-
-<div class="card">
-  <h2>Catalog products</h2>
-  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet. Catalog templates have no price yet, so they cannot be sorted by price.</small></p>
-  <div id="catalogList"><small>Loading catalog...</small></div>
-</div>
-
-<div class="card">
-  <h2>Variants and publish</h2>
-  <div id="variantCount"><small>Open a set to see variant counts.</small></div>
-  <button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
-  <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
-  <div id="publishResult"></div>
-  <p><small>Draft only, never live. Ovi fulfils orders manually. Profit is not shown or checked here: Shopify already has profit.</small></p>
-</div>
-
-<div class="card">
-  <h2>New set</h2>
-  <input id="setName" placeholder="Set name, e.g. Oregon Ducks Set">
-  <button onclick="createSet()">Create set</button>
-  <div id="sets"></div>
-</div>
-
-<script>
 let currentSet = null;
 let allSets = [];
 let selectedPid = null;
@@ -345,11 +42,13 @@ function showLoginForm() {
 }
 function markDirty() {
   dirty = true;
-  document.getElementById('dirtyNote').style.display = 'block';
+  const n = document.getElementById('dirtyNote');
+  if (n) n.style.display = 'block';
 }
 function clearDirty() {
   dirty = false;
-  document.getElementById('dirtyNote').style.display = 'none';
+  const n = document.getElementById('dirtyNote');
+  if (n) n.style.display = 'none';
 }
 document.addEventListener('input', function(e) {
   const t = e.target;
@@ -408,11 +107,18 @@ function esc(s) {
 function safeId(pid) { return String(pid).replace(/[^A-Za-z0-9]/g, '_'); }
 function updateCurrentSetLine() {
   const line = document.getElementById('currentSetLine');
-  if (!currentSet) { line.innerHTML = '<small>No set selected yet.</small>'; return; }
+  const top = document.getElementById('topSetName');
+  const ph = document.getElementById('productsHeader');
+  if (!currentSet) {
+    if (line) line.innerHTML = '<small>No set selected yet.</small>';
+    if (top) top.textContent = 'No set open';
+    if (ph) ph.textContent = 'PRODUCTS (0)';
+    return;
+  }
   const n = currentSet.products.length;
-  line.innerHTML = '<small>Open: <b>' + esc(currentSet.name) + '</b> (' + n + (n === 1 ? ' product' : ' products') + ')</small>';
-  document.getElementById('topSetName').textContent = currentSet.name || 'Untitled set';
-  document.getElementById('productsHeader').textContent = 'PRODUCTS (' + n + ')';
+  if (line) line.innerHTML = '<small>Open: <b>' + esc(currentSet.name) + '</b> (' + n + (n === 1 ? ' product' : ' products') + ')</small>';
+  if (top) top.textContent = currentSet.name || 'Untitled set';
+  if (ph) ph.textContent = 'PRODUCTS (' + n + ')';
 }
 function syncCache() {
   if (!currentSet) return;
@@ -422,34 +128,40 @@ function syncCache() {
 }
 function campaignOf(s) { return (s && s.campaign) || {}; }
 function renderSetList() {
+  const tbody = document.getElementById('campaignsTbody');
   const box = document.getElementById('campaignsList');
-  if (!box) return;
   const q = (document.getElementById('campaignFilter') ? document.getElementById('campaignFilter').value : '').trim().toLowerCase();
   const rows = allSets.filter(function(s) {
     if (!q) return true;
     const hay = ((s.name || '') + ' /' + (s.slug || '') + ' ' + (s.tags || []).join(' ')).toLowerCase();
     return hay.indexOf(q) !== -1;
   });
+  if (tbody) {
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="9"><small>No campaigns yet. Create one above.</small></td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(s) {
+      const n = s.products.length;
+      const camp = campaignOf(s);
+      const status = camp.status || 'draft';
+      const pillCls = status === 'active' ? 'pill active' : status === 'inactive' ? 'pill inactive' : status === 'locked' ? 'pill locked' : 'pill';
+      const first = s.products[0];
+      const art = s.design_url || (first && (first.hero_image || (first.mockups && first.mockups[0]) || (first.images && first.images[0]) || first.image)) || '';
+      const artHtml = art ? '<img class="thumb" src="' + esc(art) + '" alt="">' : '<span class="thumb" style="display:inline-block"></span>';
+      return '<tr><td><input type="checkbox" class="campaignCheck" value="' + esc(s.id) + '"></td>'
+        + '<td>' + artHtml + '</td>'
+        + '<td class="wrap"><a href="/campaigns/' + esc(s.id) + '">' + esc(s.name) + '</a><br><a href="/campaigns/' + esc(s.id) + '/designer">Designer</a></td>'
+        + '<td>/' + esc(s.slug || '') + '</td>'
+        + '<td class="wrap">' + esc((s.tags || []).join(', ') || '-') + '</td>'
+        + '<td>-</td><td>' + n + '</td>'
+        + '<td><span class="' + pillCls + '">' + esc(status.toUpperCase()) + '</span></td>'
+        + '<td>' + esc(camp.fulfillment || 'LAUNCH_END') + '</td>'
+        + '<td>' + esc(camp.end_date || '-') + '</td></tr>';
+    }).join('');
+    return;
+  }
+  if (!box) return;
   if (!rows.length) { box.innerHTML = '<small>No campaigns yet. Create one above.</small>'; return; }
   box.innerHTML = rows.map(function(s) {
-    const n = s.products.length;
-    const camp = campaignOf(s);
-    const status = camp.status || 'draft';
-    const pillCls = status === 'active' ? 'pill active' : status === 'inactive' ? 'pill inactive' : status === 'locked' ? 'pill locked' : 'pill';
-    const first = s.products[0];
-    const art = s.design_url || (first && (first.hero_image || (first.mockups && first.mockups[0]) || (first.images && first.images[0]) || first.image)) || '';
-    const artHtml = art ? '<img class="thumb" src="' + esc(art) + '" alt="">' : '<span class="thumb" style="display:inline-block"></span>';
-    const openCls = currentSet && currentSet.id === s.id ? '' : 'secondary';
-    const suffix = currentSet && currentSet.id === s.id ? ' (open)' : '';
-    return '<div class="campaignRow"><input type="checkbox" class="campaignCheck" value="' + esc(s.id) + '">' + artHtml
-      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + esc(s.name) + suffix + '</b>'
-      + '<br><small>Path: /' + esc(s.slug || '') + ' | Tags: ' + esc((s.tags || []).join(', ') || '-') + '</small>'
-      + '<br><small>Orders: - | Items: ' + n + ' | Fulfillment: ' + esc(camp.fulfillment || 'LAUNCH_END') + ' | End: ' + esc(camp.end_date || '-') + '</small>'
-      + '<br><span class="' + pillCls + '">' + esc(status.toUpperCase()) + '</span></div>'
-      + '<div><button class="' + openCls + '" onclick="selectSet(\'' + esc(s.id) + '\')">Open</button>'
-      + '<button class="secondary" onclick="openCampaignSettings(\'' + esc(s.id) + '\')">Settings</button>'
-      + '<button class="secondary" onclick="duplicateSet(\'' + esc(s.id) + '\')">Duplicate</button>'
-      + '<button class="danger" onclick="deleteSet(\'' + esc(s.id) + '\')">Delete</button></div></div>';
+    return '<div><b>' + esc(s.name) + '</b></div>';
   }).join('');
 }
 function checkedCampaignIds() {
@@ -466,6 +178,7 @@ async function createCampaign() {
     if (!r.ok) throw new Error(j.error || 'Create campaign failed.');
     document.getElementById('campaignName').value = '';
     allSets.push(j);
+    if (document.getElementById('campaignsTbody')) { window.location.href = '/campaigns/' + j.id; return; }
     selectSet(j.id);
   } catch (e) { alert(e.message); }
 }
@@ -485,25 +198,36 @@ async function bulkCampaign(action) {
     if (!r.ok) throw new Error(j.error || 'Bulk action failed.');
     if (currentSet && ids.indexOf(currentSet.id) !== -1 && action === 'delete') {
       currentSet = null; selectedPid = null;
-      document.getElementById('topSetName').textContent = 'No set open';
-      document.getElementById('productsHeader').textContent = 'PRODUCTS (0)';
+      updateCurrentSetLine();
     }
     await loadSetList();
     if (j.skipped && j.skipped.length) alert('Skipped locked campaigns: ' + j.skipped.join(', '));
   } catch (e) { alert(e.message); }
 }
 function openCampaignSettings(id) {
-  selectSet(id);
-  const card = document.getElementById('campaignSettingsCard');
-  if (card) card.scrollIntoView();
+  window.location.href = '/campaigns/' + id;
 }
 function scrollToDesigner() {
-  const el = document.querySelector('.editor');
-  if (el) el.scrollIntoView();
+  if (currentSet) window.location.href = '/campaigns/' + currentSet.id + '/designer';
 }
 function fillCampaignSettings() {
   if (!currentSet) return;
+  // Settings fields live ONLY on the settings page. On the designer
+  // page (which also calls this via refreshAfterSet) there are no
+  // camp* elements, so skip instead of throwing on a null element
+  // and aborting the rest of the designer render.
+  if (!document.getElementById('campStorefrontHomepage')) return;
   const c = campaignOf(currentSet);
+  const nameEl = document.getElementById('campName');
+  if (nameEl) nameEl.value = currentSet.name || '';
+  const slugEl = document.getElementById('campSlug');
+  if (slugEl) slugEl.value = currentSet.slug || '';
+  const tagsEl = document.getElementById('campTags');
+  if (tagsEl) tagsEl.value = (currentSet.tags || []).join(', ');
+  const hdr = document.getElementById('campHeaderName');
+  if (hdr) hdr.textContent = currentSet.name || 'Untitled campaign';
+  const pill = document.getElementById('campStatusPill');
+  if (pill) pill.textContent = (c.status || 'draft').toUpperCase();
   const fb = c.facebook || {};
   document.getElementById('campStorefrontHomepage').checked = !!c.storefront_homepage;
   document.getElementById('campShowCountdown').checked = !!c.show_countdown;
@@ -525,11 +249,15 @@ function fillCampaignSettings() {
 }
 async function saveCampaignSettings() {
   if (!currentSet) return alert('Open a campaign first.');
+  if (!document.getElementById('campDesc')) return alert('Campaign settings are on the settings page.');
+  const nameEl = document.getElementById('campName') || document.getElementById('detailName');
+  const slugEl = document.getElementById('campSlug') || document.getElementById('detailSlug');
+  const tagsEl = document.getElementById('campTags') || document.getElementById('detailTags');
   const body = {
-    name: document.getElementById('detailName').value.trim(),
-    slug: document.getElementById('detailSlug').value.trim(),
+    name: nameEl ? nameEl.value.trim() : currentSet.name,
+    slug: slugEl ? slugEl.value.trim() : currentSet.slug,
     description: document.getElementById('campDesc').value,
-    tags: document.getElementById('detailTags').value.trim(),
+    tags: tagsEl ? tagsEl.value.trim() : '',
     campaign: {
       storefront_homepage: document.getElementById('campStorefrontHomepage').checked,
       show_countdown: document.getElementById('campShowCountdown').checked,
@@ -562,7 +290,9 @@ async function saveCampaignSettings() {
   } catch (e) { alert(e.message); }
 }
 function useHowToOrder() {
-  document.getElementById('campDesc').value = 'How To Order:\nSelect Product Color/Size\nClick "Add To Cart"\nClick "Secure Checkout" and Enter Shipping & Billing Information.\n100% Printed and Made in the USA - Shipping Worldwide!\nEnjoy a 100% Secure Checkout experience.';
+  const d = document.getElementById('campDesc');
+  if (!d) return;
+  d.value = 'How To Order:\nSelect Product Color/Size\nClick "Add To Cart"\nClick "Secure Checkout" and Enter Shipping & Billing Information.\n100% Printed and Made in the USA - Shipping Worldwide!\nEnjoy a 100% Secure Checkout experience.';
   markDirty();
 }
 async function duplicateSet(id) {
@@ -571,6 +301,7 @@ async function duplicateSet(id) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Duplicate failed.');
     allSets.push(j);
+    if (document.getElementById('campaignsTbody')) { await loadSetList(); return; }
     selectSet(j.id);
   } catch (e) { alert(e.message); }
 }
@@ -584,26 +315,42 @@ async function deleteSet(id) {
     if (currentSet && currentSet.id === id) {
       currentSet = null;
       selectedPid = null;
-      document.getElementById('topSetName').textContent = 'No set open';
-      document.getElementById('productsHeader').textContent = 'PRODUCTS (0)';
-      document.getElementById('products').innerHTML = '<small>No set selected yet. Create a set first.</small>';
+      updateCurrentSetLine();
+      const pr = document.getElementById('products'); if (pr) pr.innerHTML = '<small>No set selected yet. Create a set first.</small>';
     }
     renderSetList();
     updateCurrentSetLine();
+    if (document.getElementById('campHeaderName')) { window.location.href = '/campaigns'; return; }
   } catch (e) { alert(e.message); }
 }
 async function loadSetList() {
   const box = document.getElementById('campaignsList');
+  const tbody = document.getElementById('campaignsTbody');
   let r;
   try {
     r = await fetch('/api/sets');
   } catch (e) {
-    box.innerHTML = '<small>Could not load sets. Check connection and reload.</small>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9"><small>Could not load sets. Check connection and reload.</small></td></tr>';
+    else if (box) box.innerHTML = '<small>Could not load sets. Check connection and reload.</small>';
     return;
   }
-  if (!r.ok) { box.innerHTML = '<small>Could not load sets. Reload and try again.</small>'; return; }
+  if (!r.ok) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9"><small>Could not load sets. Reload and try again.</small></td></tr>';
+    else if (box) box.innerHTML = '<small>Could not load sets. Reload and try again.</small>';
+    return;
+  }
   allSets = await r.json();
   renderSetList();
+}
+async function loadSetById(id) {
+  const r = await fetch('/api/sets');
+  if (!r.ok) throw new Error('Could not load sets.');
+  allSets = await r.json();
+  const found = allSets.filter(function(s) { return s.id === id; })[0];
+  if (!found) throw new Error('Campaign not found.');
+  currentSet = found;
+  selectedPid = (found.products[0] && found.products[0].product_id) || null;
+  return found;
 }
 function selectedProduct() {
   if (!currentSet) return null;
@@ -623,14 +370,15 @@ function selectSet(id) {
   currentSet = found;
   selectedPid = (found.products[0] && found.products[0].product_id) || null;
   const mp = currentSet.master_placement || {};
-  document.getElementById('x').value = (mp.x === undefined ? 0.5 : mp.x);
-  document.getElementById('y').value = (mp.y === undefined ? 0.45 : mp.y);
-  document.getElementById('s').value = (mp.scale === undefined ? 0.5 : mp.scale);
-  document.getElementById('angle').value = (mp.angle === undefined ? 0 : mp.angle);
-  document.getElementById('layerX').value = (mp.x === undefined ? 0.5 : mp.x);
-  document.getElementById('layerY').value = (mp.y === undefined ? 0.47 : mp.y);
-  document.getElementById('layerXVal').textContent = (+document.getElementById('layerX').value).toFixed(2);
-  document.getElementById('layerYVal').textContent = (+document.getElementById('layerY').value).toFixed(2);
+  const setVal = function(id, v) { const e = document.getElementById(id); if (e) e.value = v; };
+  setVal('x', (mp.x === undefined ? 0.5 : mp.x));
+  setVal('y', (mp.y === undefined ? 0.45 : mp.y));
+  setVal('s', (mp.scale === undefined ? 0.5 : mp.scale));
+  setVal('angle', (mp.angle === undefined ? 0 : mp.angle));
+  setVal('layerX', (mp.x === undefined ? 0.5 : mp.x));
+  setVal('layerY', (mp.y === undefined ? 0.47 : mp.y));
+  const lx = document.getElementById('layerX'); if (lx) document.getElementById('layerXVal').textContent = (+lx.value).toFixed(2);
+  const ly = document.getElementById('layerY'); if (ly) document.getElementById('layerYVal').textContent = (+ly.value).toFixed(2);
   showVals();
   clearDirty();
   updateCurrentSetLine();
@@ -644,21 +392,24 @@ function selectSet(id) {
   renderCentreMockup();
   renderArtworkSpec();
   renderLayers();
-  if (document.getElementById('productSearch').value.trim().length >= 2) searchProducts();
+  const ps = document.getElementById('productSearch'); if (ps && ps.value.trim().length >= 2) searchProducts();
 }
 function showVals() {
-  document.getElementById('xVal').textContent = (+document.getElementById('x').value).toFixed(2);
-  document.getElementById('yVal').textContent = (+document.getElementById('y').value).toFixed(2);
-  document.getElementById('sVal').textContent = (+document.getElementById('s').value).toFixed(2);
-  document.getElementById('angleVal').textContent = (+document.getElementById('angle').value).toFixed(0);
+  const setTxt = function(id, el, fmt) { const t = document.getElementById(id); const e = document.getElementById(el); if (t && e) t.textContent = fmt(+e.value); };
+  setTxt('xVal', 'x', function(v) { return v.toFixed(2); });
+  setTxt('yVal', 'y', function(v) { return v.toFixed(2); });
+  setTxt('sVal', 's', function(v) { return v.toFixed(2); });
+  setTxt('angleVal', 'angle', function(v) { return v.toFixed(0); });
   positionPlaceBox();
 }
 async function createSet() {
-  const name = document.getElementById('setName').value.trim();
+  const nameEl = document.getElementById('setName');
+  if (!nameEl) return alert('Create a campaign from the Campaigns page.');
+  const name = nameEl.value.trim();
   if (!name) return alert('Type a set name first.');
   const r = await fetch('/api/sets', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
   currentSet = await r.json();
-  document.getElementById('sets').innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
+  const setsEl = document.getElementById('sets'); if (setsEl) setsEl.innerHTML = '<p>Set created: <b>' + currentSet.name + '</b></p>';
   allSets.push(currentSet);
   selectedPid = null;
   updateCurrentSetLine();
@@ -726,6 +477,7 @@ function mockupIsCurrent(p) {
 }
 function renderProducts() {
   const box = document.getElementById('products');
+  if (!box) return;
   if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
   if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one below.</small>'; return; }
   box.innerHTML = currentSet.products.map(function(p) {
@@ -934,13 +686,16 @@ async function saveAll() {
       base_cost: costEl ? costEl.value.trim() : ''
     };
   });
+  const val = function(id, fallback) { const e = document.getElementById(id); return e ? e.value.trim() : fallback; };
+  const mp = currentSet.master_placement || {};
+  const xv = document.getElementById('x'); const yv = document.getElementById('y'); const sv = document.getElementById('s'); const av = document.getElementById('angle');
   const body = {
-    placement: { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value },
+    placement: { x: xv ? +xv.value : mp.x, y: yv ? +yv.value : mp.y, scale: sv ? +sv.value : mp.scale, angle: av ? +av.value : mp.angle },
     details: {
-      name: document.getElementById('detailName').value.trim(),
-      slug: document.getElementById('detailSlug').value.trim(),
-      description: document.getElementById('detailDesc').value.trim(),
-      tags: document.getElementById('detailTags').value.trim(),
+      name: val('detailName', currentSet.name || ''),
+      slug: val('detailSlug', currentSet.slug || ''),
+      description: val('detailDesc', currentSet.description || ''),
+      tags: val('detailTags', (currentSet.tags || []).join(', ')),
       grouping: currentSet.grouping || 'combine'
     },
     products: products
@@ -1132,6 +887,7 @@ function renderCentreMockup() {
   const img = document.getElementById('centreImg');
   const empty = document.getElementById('centreEmpty');
   const box = document.getElementById('placeBox');
+  if (!img || !empty || !box) return;
   const p = selectedProduct();
   const url = p ? centreImageUrl(p) : '';
   if (viewSide === 'back') {
@@ -1174,6 +930,7 @@ function renderCentreMockup() {
 function positionPlaceBox() {
   const img = document.getElementById('centreImg');
   const box = document.getElementById('placeBox');
+  if (!img || !box) return;
   if (img.style.display === 'none' || viewSide === 'back') { box.style.display = 'none'; return; }
   const p = selectedProduct();
   if (!p || !img.naturalWidth) { box.style.display = 'none'; return; }
@@ -1194,6 +951,7 @@ function positionPlaceBox() {
 }
 function renderArtworkSpec() {
   const box = document.getElementById('artworkSpec');
+  if (!box) return;
   if (!currentSet || !currentSet.design_url) { box.innerHTML = '<small>No design uploaded yet.</small>'; return; }
   const w = currentSet.design_width, h = currentSet.design_height, dpi = currentSet.design_dpi;
   const spec = (w && h) ? ('Artwork: ' + w + 'x' + h + (dpi ? ' @ est. ' + dpi + ' DPI' : '')) : 'Artwork uploaded.';
@@ -1203,6 +961,7 @@ function renderArtworkSpec() {
 }
 function renderLayers() {
   const box = document.getElementById('layersList');
+  if (!box) return;
   if (!currentSet) { box.innerHTML = '<small>Open a set to see layers.</small>'; return; }
   const rows = [];
   const sel = selectedProduct();
@@ -1332,11 +1091,12 @@ function fmtDraftTime(iso) {
 }
 function renderDraftLine() {
   const box = document.getElementById('draftLine');
+  if (!box) return;
   if (!currentSet) { box.innerHTML = '<small>Open a set to start.</small>'; return; }
   const t = fmtDraftTime(currentSet.draft_saved_at);
   const state = currentSet.publish_state || 'draft';
-  const stateText = state === 'published_draft' ? 'Published as DRAFT in Shopify (not live)' : (state === 'failed' ? 'Last publish failed' : 'Not published yet');
-  box.innerHTML = '<small>' + (t ? 'Draft saved ' + t + ' · ' : 'Draft not saved yet · ') + esc(stateText) + '</small>';
+  const stateText = state === 'published' ? 'Published live in Shopify' : (state === 'failed' ? 'Last publish failed' : 'Not published yet');
+  box.innerHTML = '<small>' + (t ? 'Saved ' + t + ' · ' : 'Not saved yet · ') + esc(stateText) + '</small>';
 }
 async function saveDraft() {
   if (!currentSet) return alert('Create a set first.');
@@ -1346,10 +1106,12 @@ async function saveDraft() {
   } catch (e) { alert(e.message); }
 }
 function scrollToPickers() {
-  document.getElementById('pickerCard').scrollIntoView({ behavior: 'smooth' });
+  const el = document.getElementById('pickerCard');
+  if (el) el.scrollIntoView({ behavior: 'smooth' });
 }
 async function loadCatalogTemplates() {
   const box = document.getElementById('catalogList');
+  if (!box) return;
   let r;
   try { r = await fetch('/api/catalog/templates'); } catch (e) { box.innerHTML = '<small>Could not load catalog. Reload and try again.</small>'; return; }
   if (!r.ok) { box.innerHTML = '<small>Could not load catalog.</small>'; return; }
@@ -1377,16 +1139,17 @@ async function addAllCatalogTemplates() {
 function setGrouping(g) {
   if (!currentSet) return alert('Create a set first.');
   currentSet.grouping = g;
-  document.getElementById('groupCombine').style.outline = g === 'combine' ? '3px solid #0f766e' : '';
-  document.getElementById('groupSplit').style.outline = g === 'split' ? '3px solid #0f766e' : '';
+  const a = document.getElementById('groupCombine'); if (a) a.style.outline = g === 'combine' ? '3px solid #0f766e' : '';
+  const b = document.getElementById('groupSplit'); if (b) b.style.outline = g === 'split' ? '3px solid #0f766e' : '';
 }
 async function saveDetails() {
   if (!currentSet) return alert('Create a set first.');
+  const val = function(id, fallback) { const e = document.getElementById(id); return e ? e.value.trim() : fallback; };
   const body = {
-    name: document.getElementById('detailName').value.trim(),
-    slug: document.getElementById('detailSlug').value.trim(),
-    description: document.getElementById('detailDesc').value.trim(),
-    tags: document.getElementById('detailTags').value.trim(),
+    name: val('detailName', currentSet.name || ''),
+    slug: val('detailSlug', currentSet.slug || ''),
+    description: val('detailDesc', currentSet.description || ''),
+    tags: val('detailTags', (currentSet.tags || []).join(', ')),
     grouping: currentSet.grouping || 'combine'
   };
   try {
@@ -1397,14 +1160,16 @@ async function saveDetails() {
 }
 function fillDetails() {
   if (!currentSet) return;
-  document.getElementById('detailName').value = currentSet.name || '';
-  document.getElementById('detailSlug').value = currentSet.slug || '';
-  document.getElementById('detailDesc').value = currentSet.description || '';
-  document.getElementById('detailTags').value = (currentSet.tags || []).join(', ');
+  const setVal = function(id, v) { const e = document.getElementById(id); if (e) e.value = v; };
+  setVal('detailName', currentSet.name || '');
+  setVal('detailSlug', currentSet.slug || '');
+  setVal('detailDesc', currentSet.description || '');
+  setVal('detailTags', (currentSet.tags || []).join(', '));
   setGrouping(currentSet.grouping || 'combine');
 }
 async function renderVariantCount() {
   const box = document.getElementById('variantCount');
+  if (!box) return;
   if (!currentSet) { box.innerHTML = '<small>Open a set to see variant counts.</small>'; return; }
   try {
     const r = await fetch('/api/sets/' + currentSet.id + '/variant-count');
@@ -1415,17 +1180,19 @@ async function renderVariantCount() {
 }
 function renderPublishStatus() {
   const box = document.getElementById('publishStatus');
+  if (!box) return;
   if (!currentSet) { box.innerHTML = ''; return; }
   const state = currentSet.publish_state || 'draft';
-  const map = { draft: 'Not published yet', launching: 'Publishing...', published_draft: 'Published as DRAFT in Shopify (not live)', failed: 'Last publish failed', unavailable: 'Hidden' };
+  const map = { draft: 'Not published yet', launching: 'Publishing...', published: 'Published live in Shopify', failed: 'Last publish failed', unavailable: 'Hidden' };
   box.innerHTML = '<p>Publish status: <b>' + esc(map[state] || state) + '</b>' + (currentSet.publish_error ? ' <span class="warn">' + esc(currentSet.publish_error) + '</span>' : '') + '</p>';
 }
 async function previewPublish() {
   if (!currentSet) return alert('Create a set first.');
   const box = document.getElementById('publishResult');
+  if (!box) return;
   box.innerHTML = '<small>Checking...</small>';
   try {
-    const j = await postSet('/publish-draft', { dry_run: true });
+    const j = await postSet('/publish', { dry_run: true });
     const rows = (j.checklist || j.products).map(function(p) {
       const variants = p.variants && p.variants.length !== undefined ? p.variants.length : p.variants;
       const ready = p.ready !== undefined ? p.ready : true;
@@ -1435,17 +1202,18 @@ async function previewPublish() {
     box.innerHTML = '<p class="ok">Preview only, nothing created.</p>' + rows + warns + '<p><small>' + esc(j.note) + '</small></p>';
   } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
-async function publishDraft() {
+async function publishLive() {
   if (!currentSet) return alert('Create a set first.');
-  if (!confirm('Publish this set to Shopify as DRAFT products? They will NOT go live.')) return;
+  if (!confirm('Publish this set to Shopify as LIVE products? They will be visible in the store immediately.')) return;
   const box = document.getElementById('publishResult');
+  if (!box) return;
   box.innerHTML = '<small>Publishing...</small>';
   try {
-    const j = await postSet('/publish-draft', {});
-    currentSet.publish_state = 'published_draft'; currentSet.artwork_locked = true;
+    const j = await postSet('/publish', {});
+    currentSet.publish_state = 'published'; currentSet.artwork_locked = true;
     renderPublishStatus(); renderDraftLine();
     const ids = j.shopify_ids || [];
-    let html = '<p class="ok">Published as draft. Shopify IDs: ' + esc(ids.join(', ')) + '</p>';
+    let html = '<p class="ok">Published live. Shopify IDs: ' + esc(ids.join(', ')) + '</p>';
     if (j.partial) html += '<p class="warn">Partial publish: ' + j.created.length + ' of ' + j.total + ' created. Tap Publish again to resume from product ' + (j.next_index + 1) + '.</p>';
     if (ids.length) html += '<p><button class="secondary" onclick="createSetPage()">Create hidden set page on Shopify</button> <small>Creates a hidden page (not linked anywhere) so the set can be shared later. It will NOT appear in the store.</small></p>';
     box.innerHTML = html;
@@ -1618,6 +1386,7 @@ async function uploadDesign() {
 async function saveMaster() {
   if (!currentSet) return alert('Create a set first.');
   const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value };
+  const _mr = document.getElementById('masterResult');
   const r = await fetch('/api/sets/' + currentSet.id + '/master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ placement }) });
   currentSet = await r.json();
   syncCache();
@@ -1625,10 +1394,4 @@ async function saveMaster() {
   document.getElementById('masterResult').innerHTML = '<p>Master saved. Every locked product now follows it.</p>';
   positionPlaceBox();
 }
-showVals();
-checkAuth();
-loadSetList();
-loadCatalogTemplates();
-</script>
-</body>
-</html>
+/* Per-page init scripts call checkAuth + their own loader. */

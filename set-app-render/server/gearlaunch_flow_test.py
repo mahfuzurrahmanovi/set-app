@@ -312,7 +312,7 @@ def main():
         "cheap-set", "Cheap Set", slug="cheap",
         products=[product("c1", "Cheap Tee", ["Black"], ["S"],
                           sale=10, cost=12)])})
-    r = post("/api/sets/cheap-set/publish-draft", {"dry_run": True})
+    r = post("/api/sets/cheap-set/publish", {"dry_run": True})
     check("price below base cost does NOT block dry-run",
           r.status_code == 200 and r.get_json().get("dry_run") is True,
           str(r.status_code) + str(r.get_json())[:200])
@@ -334,12 +334,12 @@ def main():
                    products=big_products)
     big["grouping"] = "combine"
     write_sets({"big-set": big})
-    r = post("/api/sets/big-set/publish-draft", {"dry_run": True})
+    r = post("/api/sets/big-set/publish", {"dry_run": True})
     check("combine over 100 variants still blocked",
           r.status_code == 400 and "100" in (r.get_json().get("error") or ""),
           str(r.status_code) + str(r.get_json())[:200])
     post("/api/sets/big-set/details", {"grouping": "split"})
-    r = post("/api/sets/big-set/publish-draft", {"dry_run": True})
+    r = post("/api/sets/big-set/publish", {"dry_run": True})
     check("split same set passes variant guard",
           r.status_code == 200 and r.get_json().get("dry_run") is True,
           str(r.status_code) + str(r.get_json())[:200])
@@ -348,10 +348,15 @@ def main():
     print("== 6. UI markers ==")
     import re as _re
     import subprocess
-    html = open(os.path.join(
+    html = ""
+    for _f in ("campaigns.html", "campaign_settings.html", "designer.html"):
+        html += open(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "templates", _f)).read()
+    html += open(os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
-        "templates", "index.html")).read()
-    for marker in ["campaignsList", "Create campaign",
+        "static", "app.js")).read()
+    for marker in ["campaignsTbody", "Create campaign",
                    "Campaign settings", "How To Order",
                    "pickColorsModal", "Select All",
                    "Position", "Refresh", "FRONT", "BACK"]:
@@ -359,14 +364,11 @@ def main():
     check("UI has no profit display",
           "Profit:" not in html and "profitOf" not in html
           and "negative profit" not in html.lower(), "")
-    scripts = _re.findall(r"<script>(.*?)</script>", html, _re.S)
-    check("exactly one editor script block", len(scripts) == 1,
-          len(scripts))
-    tmp_js = os.path.join(TMP, "editor.js")
-    with open(tmp_js, "w") as f:
-        f.write(scripts[0])
-    proc = subprocess.run(["node", "--check", tmp_js],
-                          capture_output=True, text=True)
+    check("UI has no draft publish wording",
+          "Publish as DRAFT" not in html, "")
+    proc = subprocess.run(["node", "--check", os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "static", "app.js")], capture_output=True, text=True)
     check("editor JS passes node --check", proc.returncode == 0,
           proc.stderr[:300])
 

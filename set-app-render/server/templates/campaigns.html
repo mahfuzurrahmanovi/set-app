@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaigns - Set App</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<nav class="nav"><a href="/campaigns">Campaigns</a><button class="secondary" onclick="doLogout()">Log out</button></nav>
+<h1>Campaigns</h1>
+<p><small>Every set is a campaign, like Gearlaunch. Tap a campaign name for its settings, or Designer for its designer page.</small></p>
+
+<div class="card" id="authBanner" style="display:none">
+  <p class="warn" id="authBannerText"></p>
+</div>
+
+<div class="card" id="loginCard" style="display:none">
+  <h2>Log in</h2>
+  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
+  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
+  <button onclick="doLogin()">Log in</button>
+  <div id="loginResult"></div>
+</div>
+
+<div class="card">
+  <label>Filter by name, path, tags</label><input id="campaignFilter" placeholder="e.g. golden, mind, warriors" oninput="renderSetList()">
+  <label>New campaign name</label><input id="campaignName" placeholder="e.g. Golden State Of">
+  <button onclick="createCampaign()">Create campaign</button>
+  <div class="row">
+    <button class="secondary" onclick="bulkCampaign('activate')">Activate</button>
+    <button class="secondary" onclick="bulkCampaign('deactivate')">Deactivate</button>
+    <button class="secondary" onclick="bulkCampaign('delete')">Delete</button>
+  </div>
+  <label>Tag for selected campaigns</label><input id="bulkTag" placeholder="e.g. warriors">
+  <button class="secondary" onclick="bulkCampaign('tag')">Tag</button>
+  <div class="tableWrap">
+    <table class="campaigns">
+      <thead><tr><th></th><th>ART</th><th>NAME</th><th>PATH</th><th>TAGS</th><th>ORDERS</th><th>ITEMS</th><th>STATUS</th><th>FULFILLMENT</th><th>END</th></tr></thead>
+      <tbody id="campaignsTbody">
+      {% for row in rows %}
+        <tr>
+          <td><input type="checkbox" class="campaignCheck" value="{{ row.id }}"></td>
+          <td>{% if row.art_url %}<img class="thumb" src="{{ row.art_url }}" alt="">{% else %}<span class="thumb" style="display:inline-block"></span>{% endif %}</td>
+          <td class="wrap"><a href="/campaigns/{{ row.id }}">{{ row.name }}</a><br><a href="/campaigns/{{ row.id }}/designer">Designer</a></td>
+          <td>{{ row.path }}</td>
+          <td class="wrap">{{ row.tags | join(', ') or '-' }}</td>
+          <td>-</td>
+          <td>{{ row.items }}</td>
+          <td><span class="pill">{{ row.status.upper() }}</span></td>
+          <td>{{ row.fulfillment }}</td>
+          <td>{{ row.end or '-' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p><small>Orders shows - because this app tracks no orders; Ovi fulfils manually. Profit is not shown here: Shopify already has profit.</small></p>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+checkAuth();
+loadSetList();
+</script>
+</body>
+</html>

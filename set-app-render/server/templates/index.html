@@ -52,6 +52,18 @@
 <h1>Set App</h1>
 <p><small>Build sets, place one design, publish to the whole set. Phone friendly.</small></p>
 
+<div class="card" id="authBanner" style="display:none">
+  <p class="warn" id="authBannerText"></p>
+</div>
+
+<div class="card" id="loginCard" style="display:none">
+  <h2>Log in</h2>
+  <p><small>This app is password protected. Ask Ovi for the password.</small></p>
+  <label>Password</label><input type="password" id="loginPassword" autocomplete="current-password">
+  <button onclick="doLogin()">Log in</button>
+  <div id="loginResult"></div>
+</div>
+
 <div class="card">
   <h2>Open a set</h2>
   <p><small>Tap a set to open it, then design on it below.</small></p>
@@ -62,12 +74,17 @@
 <div class="card topbar">
   <h2 id="topSetName">No set open</h2>
   <p id="draftLine"><small>Open a set to start.</small></p>
+  <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
   <div class="row">
-    <button class="secondary" onclick="saveDraft()">Save</button>
+    <button class="secondary" onclick="saveAll()">Save</button>
     <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
   </div>
+  <div class="row">
+    <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
+    <button class="secondary" onclick="doLogout()">Log out</button>
+  </div>
   <div id="publishStatus"></div>
-  <p><small>Save stores a draft, it does not publish. Publish creates DRAFT products only, never live. Ovi fulfils orders manually.</small></p>
+  <p><small>Save stores everything: placement, details, colours, sizes and prices. Publish creates DRAFT products only, never live. Ovi fulfils orders manually.</small></p>
 </div>
 
 <div class="editor">
@@ -79,16 +96,19 @@
     </div>
     <div class="mockupWrap" id="centreWrap">
       <div id="centreEmpty"><p style="padding:20px"><small>Open a set to see its product photo with the dashed placement box. Upload a design to see it placed on the photo.</small></p></div>
-      <img id="centreImg" alt="Product mockup" style="display:none" onload="positionPlaceBox()">
+      <img id="centreImg" alt="Product mockup" style="display:none;cursor:pointer" onclick="tapToPlace(event)" onload="positionPlaceBox()">
       <div class="placebox" id="placeBox" style="display:none"></div>
     </div>
+    <p><small>Tap the mockup to move the placement box there.</small></p>
+    <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
+    <div id="previewAllResult"></div>
     <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
     <p id="artworkSpec"><small>No design uploaded yet.</small></p>
     <p><small>Design rule: transparent PNG only, no background. 150 DPI minimum for sharp prints (estimate at a 12 inch print width).</small></p>
     <h2>Layers</h2>
     <p><small>One design across the whole set, plus text layers. Eye hides a layer. "This product" hides it on the selected product only. "All products" deletes a text layer everywhere.</small></p>
     <div id="layersList"><small>Open a set to see layers.</small></div>
-    <details><summary>Add a text layer</summary>
+    <details id="layerFormDetails"><summary>Add a text layer</summary>
       <label>Text</label><input id="layerText" placeholder="e.g. GO DUCKS">
       <label>Font</label><select id="layerFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
       <label>Size (pixels)</label><input id="layerSize" inputmode="numeric" value="120">
@@ -96,7 +116,10 @@
       <label>Lettercase</label><select id="layerCase"><option value="none">As typed</option><option value="upper">UPPERCASE</option><option value="lower">lowercase</option></select>
       <label>Rotation (degrees, -180 to 180)</label><input id="layerRotation" inputmode="decimal" value="0">
       <label>Opacity (0 to 100%)</label><input type="range" id="layerOpacity" min="0" max="100" value="100">
-      <button class="secondary" onclick="addTextLayer()">Add text layer</button>
+      <label>Left / right <span id="layerXVal">0.50</span></label><input type="range" id="layerX" min="0" max="1" step="0.01" value="0.5" oninput="document.getElementById('layerXVal').textContent=(+this.value).toFixed(2)">
+      <label>Up / down <span id="layerYVal">0.47</span></label><input type="range" id="layerY" min="0" max="1" step="0.01" value="0.47" oninput="document.getElementById('layerYVal').textContent=(+this.value).toFixed(2)">
+      <button class="secondary" id="layerSubmitBtn" onclick="addTextLayer()">Add text layer</button>
+      <button class="secondary" id="layerCancelBtn" style="display:none" onclick="cancelLayerEdit()">Cancel edit</button>
       <div id="layerResult"></div>
     </details>
   </div>
@@ -132,6 +155,7 @@
 
 <div class="card">
   <h2>Upload design</h2>
+  <p><small>First file replaces this set's design. Each extra file creates a duplicate of this set with that file as its design.</small></p>
   <input type="file" id="designFile" accept="image/*" multiple>
   <button onclick="uploadDesign()">Upload</button>
   <div id="uploadResult"></div>
@@ -146,6 +170,8 @@
   <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
   <label>Size <span id="sVal">0.50</span></label>
   <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <label>Angle <span id="angleVal">0</span></label>
+  <input type="range" id="angle" min="-180" max="180" step="1" value="0" oninput="showVals()">
   <div class="row">
     <button class="secondary" onclick="aidCenterH()">Center left / right</button>
     <button class="secondary" onclick="aidCenterV()">Center up / down</button>
@@ -198,6 +224,101 @@ let allSets = [];
 let selectedPid = null;
 let viewSide = 'front';
 let lastSearchResults = [];
+let csrfToken = null;
+let dirty = false;
+let editingLayerId = null;
+// CSRF + login handling: every POST carries the session token; a 401
+// anywhere opens the login form instead of failing silently.
+const _realFetch = window.fetch.bind(window);
+async function ensureCsrf() {
+  if (csrfToken) return csrfToken;
+  const r = await _realFetch('/api/csrf-token');
+  const j = await r.json();
+  csrfToken = j.csrf_token;
+  return csrfToken;
+}
+window.fetch = async function(url, opts) {
+  opts = opts || {};
+  const method = (opts.method || 'GET').toUpperCase();
+  if (method === 'POST') {
+    const token = await ensureCsrf();
+    opts.headers = Object.assign({}, opts.headers, {'X-CSRF-Token': token});
+    let r = await _realFetch(url, opts);
+    if (r.status === 403) {
+      csrfToken = null;
+      const token2 = await ensureCsrf();
+      opts.headers = Object.assign({}, opts.headers, {'X-CSRF-Token': token2});
+      r = await _realFetch(url, opts);
+    }
+    if (r.status === 401) showLoginForm();
+    return r;
+  }
+  const r = await _realFetch(url, opts);
+  if (r.status === 401) showLoginForm();
+  return r;
+};
+function showLoginForm() {
+  document.getElementById('loginCard').style.display = 'block';
+}
+function markDirty() {
+  dirty = true;
+  document.getElementById('dirtyNote').style.display = 'block';
+}
+function clearDirty() {
+  dirty = false;
+  document.getElementById('dirtyNote').style.display = 'none';
+}
+document.addEventListener('input', function(e) {
+  const t = e.target;
+  if (!t || !t.id) return;
+  if (['productSearch', 'setName', 'loginPassword', 'productId'].indexOf(t.id) !== -1) return;
+  if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') markDirty();
+});
+document.addEventListener('change', function(e) {
+  const t = e.target;
+  if (!t || !t.id) return;
+  if (['productSearch', 'setName', 'loginPassword', 'productId'].indexOf(t.id) !== -1) return;
+  if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') markDirty();
+});
+async function checkAuth() {
+  try {
+    const r = await fetch('/api/auth-status');
+    const j = await r.json();
+    if (!j.password_configured) {
+      document.getElementById('authBannerText').textContent = 'Warning: no app password is set, so anyone with this link can edit sets. Set SET_APP_PASSWORD on the server.';
+      document.getElementById('authBanner').style.display = 'block';
+    } else if (!j.authenticated) {
+      showLoginForm();
+    }
+  } catch (e) {}
+}
+async function doLogin() {
+  const pw = document.getElementById('loginPassword').value;
+  const box = document.getElementById('loginResult');
+  try {
+    const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ password: pw }) });
+    const j = await r.json();
+    if (!r.ok) { box.innerHTML = '<p class="warn">' + esc(j.error || 'Login failed.') + '</p>'; return; }
+    document.getElementById('loginCard').style.display = 'none';
+    document.getElementById('loginPassword').value = '';
+    loadSetList();
+    loadCatalogTemplates();
+  } catch (e) { box.innerHTML = '<p class="warn">Login failed. Try again.</p>'; }
+}
+async function doLogout() {
+  try { await fetch('/api/logout', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) }); } catch (e) {}
+  currentSet = null;
+  showLoginForm();
+}
+function downloadSetJson() {
+  if (!currentSet) return alert('Open a set first.');
+  const blob = new Blob([JSON.stringify(currentSet, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = currentSet.id + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
@@ -224,8 +345,37 @@ function renderSetList() {
     const label = esc(s.name) + ' (' + n + (n === 1 ? ' product' : ' products') + ')';
     const cls = currentSet && currentSet.id === s.id ? '' : 'secondary';
     const suffix = currentSet && currentSet.id === s.id ? ' (open)' : '';
-    return '<button class="' + cls + '" onclick="selectSet(\'' + esc(s.id) + '\')">' + label + suffix + '</button>';
+    return '<div style="display:flex;gap:8px;margin-top:8px"><button style="flex:1;margin-top:0" class="' + cls + '" onclick="selectSet(\'' + esc(s.id) + '\')">' + label + suffix + '</button>'
+      + '<button class="secondary" style="width:auto;margin-top:0" onclick="duplicateSet(\'' + esc(s.id) + '\')">Duplicate</button>'
+      + '<button class="danger" style="width:auto;margin-top:0" onclick="deleteSet(\'' + esc(s.id) + '\')">Delete</button></div>';
   }).join('');
+}
+async function duplicateSet(id) {
+  try {
+    const r = await fetch('/api/sets/' + id + '/duplicate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Duplicate failed.');
+    allSets.push(j);
+    selectSet(j.id);
+  } catch (e) { alert(e.message); }
+}
+async function deleteSet(id) {
+  if (!confirm('Delete this set? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/sets/' + id + '/delete', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Delete failed.');
+    allSets = allSets.filter(function(s) { return s.id !== id; });
+    if (currentSet && currentSet.id === id) {
+      currentSet = null;
+      selectedPid = null;
+      document.getElementById('topSetName').textContent = 'No set open';
+      document.getElementById('productsHeader').textContent = 'PRODUCTS (0)';
+      document.getElementById('products').innerHTML = '<small>No set selected yet. Create a set first.</small>';
+    }
+    renderSetList();
+    updateCurrentSetLine();
+  } catch (e) { alert(e.message); }
 }
 async function loadSetList() {
   const box = document.getElementById('setList');
@@ -250,6 +400,9 @@ function effectivePlacementOf(p) {
   return (currentSet && currentSet.master_placement) || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
 }
 function selectSet(id) {
+  if (dirty && currentSet && currentSet.id !== id) {
+    if (!confirm('Switch set without saving? Unsaved changes will be lost.')) return;
+  }
   const found = allSets.filter(function(s) { return s.id === id; })[0];
   if (!found) return;
   currentSet = found;
@@ -258,7 +411,13 @@ function selectSet(id) {
   document.getElementById('x').value = (mp.x === undefined ? 0.5 : mp.x);
   document.getElementById('y').value = (mp.y === undefined ? 0.45 : mp.y);
   document.getElementById('s').value = (mp.scale === undefined ? 0.5 : mp.scale);
+  document.getElementById('angle').value = (mp.angle === undefined ? 0 : mp.angle);
+  document.getElementById('layerX').value = (mp.x === undefined ? 0.5 : mp.x);
+  document.getElementById('layerY').value = (mp.y === undefined ? 0.47 : mp.y);
+  document.getElementById('layerXVal').textContent = (+document.getElementById('layerX').value).toFixed(2);
+  document.getElementById('layerYVal').textContent = (+document.getElementById('layerY').value).toFixed(2);
   showVals();
+  clearDirty();
   updateCurrentSetLine();
   renderSetList();
   renderProducts();
@@ -275,6 +434,8 @@ function showVals() {
   document.getElementById('xVal').textContent = (+document.getElementById('x').value).toFixed(2);
   document.getElementById('yVal').textContent = (+document.getElementById('y').value).toFixed(2);
   document.getElementById('sVal').textContent = (+document.getElementById('s').value).toFixed(2);
+  document.getElementById('angleVal').textContent = (+document.getElementById('angle').value).toFixed(0);
+  positionPlaceBox();
 }
 async function createSet() {
   const name = document.getElementById('setName').value.trim();
@@ -329,6 +490,28 @@ function productThumb(p) {
   if (!url) return '<span class="thumb" style="display:inline-block"></span>';
   return '<img class="thumb" src="' + esc(url) + '" alt="">';
 }
+function priceRangeOf(p) {
+  const prices = [];
+  const vp = p.variant_prices || {};
+  Object.keys(vp).forEach(function(k) {
+    const n = parseFloat(vp[k]);
+    if (!isNaN(n)) prices.push(n);
+  });
+  if (!prices.length) return null;
+  const lo = Math.min.apply(null, prices), hi = Math.max.apply(null, prices);
+  return lo === hi ? lo.toFixed(2) : lo.toFixed(2) + ' to ' + hi.toFixed(2);
+}
+function mockupIsCurrent(p) {
+  if (!currentSet) return true;
+  const dv = currentSet.design_version === undefined ? 1 : currentSet.design_version;
+  const mockups = p.mockups || [];
+  const display = (p.hero_image && mockups.indexOf(p.hero_image) !== -1) ? p.hero_image : (mockups[0] || null);
+  if (!display) return true;
+  if (display.indexOf('/static/mockups/') !== 0) return true;
+  const versions = p.mockup_versions || {};
+  if (versions[display] === dv) return true;
+  return p.mockup_version === dv;
+}
 function renderProducts() {
   const box = document.getElementById('products');
   if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
@@ -341,12 +524,22 @@ function renderProducts() {
     const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>' : '';
     const vc = variantCountOf(p);
     const profit = profitOf(p);
+    const range = priceRangeOf(p);
+    let priceLine;
+    if (p.sale_price !== undefined && p.sale_price !== null && p.sale_price !== '') {
+      priceLine = '<small>Selling price: ' + money(p.sale_price) + ' | Unit cost: ' + money(p.base_cost) + '</small>';
+      if (range) priceLine += '<br><small class="warn">This replaces the store\'s per-variant prices for all variants.</small>';
+    } else if (range) {
+      priceLine = '<small>Price: ' + range + ' (from the store listing) | Unit cost: ' + money(p.base_cost) + '</small>';
+    } else {
+      priceLine = '<small>Selling price: not set | Unit cost: ' + money(p.base_cost) + '</small>';
+    }
     const profitLine = profit === null ? '<small>Profit: set sale price and base cost below.</small>'
       : (profit < 0 ? '<span class="warn">Profit: ' + profit.toFixed(2) + ' (negative, publish blocked)</span>'
       : '<span class="ok">Profit: ' + profit.toFixed(2) + ' per item</span>');
-    const defaultColor = (p.colours && p.colours[0]) ? esc(p.colours[0]) : 'not set';
+    const defaultColor = esc(p.default_color || (p.colours && p.colours[0]) || 'not set');
     const swatches = (p.colours || []).map(function(c) {
-      return '<span class="swatch" title="' + esc(c) + '" style="background:' + swatchHex(c) + '"></span>';
+      return '<span class="swatch" title="' + esc(c) + '" style="background:' + swatchHex(c) + ';cursor:pointer" onclick="event.stopPropagation();toggleSwatch(\'' + esc(p.product_id) + '\', \'' + esc(c) + '\')"></span>';
     }).join('');
     const colourOpts = p.all_colours || p.colours || [];
     const sizeOpts = p.all_sizes || p.sizes || [];
@@ -373,27 +566,47 @@ function renderProducts() {
         + '<button class="secondary" onclick="reorderMockup(\'' + esc(p.product_id) + '\', ' + i + ', 1)">Down</button></div>';
     }).join('');
     const reorderBlock = ((p.mockups || []).length >= 2)
-      ? '<div><h3>Mockup order</h3><p><small>Use Up / Down to reorder mockups. First is the storefront image when no hero is picked.</small></p>' + reorderRows + '</div>'
+      ? '<div><h3>Mockup order</h3><p><small>Hero is the first Shopify image by definition; reorder changes the rest.</small></p>' + reorderRows + '</div>'
       : '';
+    const staleNote = (!mockupIsCurrent(p))
+      ? '<p><span class="warn">Mockup outdated: tap Preview mockup again before publishing.</span></p>' : '';
+    const defColOpts = (p.colours || []).map(function(c) {
+      const sel = (p.default_color || p.colours[0]) === c ? ' selected' : '';
+      return '<option value="' + esc(c) + '"' + sel + '>' + esc(c) + '</option>';
+    }).join('');
+    const refreshBtn = p.kind === 'catalog' ? '' : '<button class="secondary" onclick="refreshProduct(\'' + esc(p.product_id) + '\')">Refresh from Shopify</button>';
+    let placementBlock = '';
+    if (!p.locked) {
+      const pl = p.override_placement || effectivePlacementOf(p);
+      placementBlock = '<div onclick="event.stopPropagation()"><h3>This product\'s placement</h3>'
+        + '<label>Left / right</label><input type="range" id="px-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.x === undefined ? 0.5 : pl.x) + '">'
+        + '<label>Up / down</label><input type="range" id="py-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.y === undefined ? 0.45 : pl.y) + '">'
+        + '<label>Size</label><input type="range" id="ps-' + sid + '" min="0.1" max="1" step="0.01" value="' + (pl.scale === undefined ? 0.5 : pl.scale) + '">'
+        + '<label>Angle</label><input type="range" id="pa-' + sid + '" min="-180" max="180" step="1" value="' + (pl.angle === undefined ? 0 : pl.angle) + '">'
+        + '<button class="secondary" onclick="saveProductPlacement(\'' + esc(p.product_id) + '\')">Save placement for this product</button></div>';
+    }
     return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
       + '<div style="display:flex;gap:10px;align-items:flex-start">' + productThumb(p)
       + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + title + '</b>' + badge
-      + '<br><small>Selling price: ' + money(p.sale_price) + ' | Unit cost: ' + money(p.base_cost) + ' | ' + profitLine + '</small>'
+      + '<br>' + priceLine + ' | ' + profitLine
       + '<br><small>Default color: ' + defaultColor + ' | ' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + '</small>'
       + '<div class="swatches">' + swatches + '</div></div>'
       + '<button class="secondary iconbtn" title="Remove from set" onclick="event.stopPropagation();removeProduct(\'' + esc(p.product_id) + '\')">X</button></div>'
+      + staleNote
       + '<div class="row" onclick="event.stopPropagation()"><button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
       + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button></div>'
       + '<div id="preview-' + sid + '"></div>'
+      + placementBlock
       + '<details onclick="event.stopPropagation()"><summary>Pick colors</summary>'
-      + '<p><small>Colours (tick to include):</small></p><div class="chips">' + colourChips + '</div>'
+      + '<p><small>Colours (tick to include, or tap a swatch above):</small></p><div class="chips">' + colourChips + '</div>'
       + '<p><small>Sizes (tick to include):</small></p><div class="chips">' + sizeChips + '</div>'
       + '<button class="secondary" onclick="saveVariants(\'' + esc(p.product_id) + '\')">Save colours + sizes</button>'
+      + '<label>Default color</label><select id="defcol-' + sid + '" onchange="saveDefaultColor(\'' + esc(p.product_id) + '\')">' + defColOpts + '</select>'
       + '<label>Sale price</label><input id="sale-' + sid + '" inputmode="decimal" placeholder="e.g. 27.99" value="' + (p.sale_price === undefined || p.sale_price === null ? '' : esc(p.sale_price)) + '">'
-      + '<label>Compare-at price (optional)</label><input id="cmp-' + sid + '" inputmode="decimal" placeholder="e.g. 34.99" value="' + (p.compare_at_price === undefined || p.compare_at_price === null ? '' : esc(p.compare_at_price)) + '">'
+      + '<label>Compare-at price (optional, must be higher than sale)</label><input id="cmp-' + sid + '" inputmode="decimal" placeholder="e.g. 34.99" value="' + (p.compare_at_price === undefined || p.compare_at_price === null ? '' : esc(p.compare_at_price)) + '">'
       + '<label>Base cost</label><input id="cost-' + sid + '" inputmode="decimal" placeholder="e.g. 12.50" value="' + (p.base_cost === undefined || p.base_cost === null ? '' : esc(p.base_cost)) + '">'
       + '<button class="secondary" onclick="savePricing(\'' + esc(p.product_id) + '\')">Save price</button>'
-      + '<div id="priceResult-' + sid + '"></div></details>'
+      + '<div id="priceResult-' + sid + '"></div>' + refreshBtn + '</details>'
       + (mockups.length ? '<details onclick="event.stopPropagation()"><summary>Mockups + hero</summary><label>Main image for the listing</label><select id="hero-' + sid + '">' + heroOpts + '</select><button class="secondary" onclick="saveHero(\'' + esc(p.product_id) + '\')">Save hero</button></details>' : '')
       + reorderBlock
       + '</div>';
@@ -410,6 +623,78 @@ function refreshAfterSet(j) {
   syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts();
   renderVariantCount(); renderPublishStatus(); renderDraftLine();
   renderCentreMockup(); renderArtworkSpec(); renderLayers();
+  clearDirty();
+}
+async function saveAll() {
+  if (!currentSet) return alert('Create a set first.');
+  const products = (currentSet.products || []).map(function(p) {
+    const sid = safeId(p.product_id);
+    const colours = [], sizes = [];
+    document.querySelectorAll('input[data-prod="' + p.product_id + '"]').forEach(function(cb) {
+      if (!cb.checked) return;
+      if (cb.getAttribute('data-kind') === 'colour') colours.push(cb.value); else sizes.push(cb.value);
+    });
+    const saleEl = document.getElementById('sale-' + sid);
+    const cmpEl = document.getElementById('cmp-' + sid);
+    const costEl = document.getElementById('cost-' + sid);
+    return {
+      product_id: p.product_id,
+      colours: colours,
+      sizes: sizes,
+      sale_price: saleEl ? saleEl.value.trim() : '',
+      compare_at_price: cmpEl ? cmpEl.value.trim() : '',
+      base_cost: costEl ? costEl.value.trim() : ''
+    };
+  });
+  const body = {
+    placement: { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value },
+    details: {
+      name: document.getElementById('detailName').value.trim(),
+      slug: document.getElementById('detailSlug').value.trim(),
+      description: document.getElementById('detailDesc').value.trim(),
+      tags: document.getElementById('detailTags').value.trim(),
+      grouping: currentSet.grouping || 'combine'
+    },
+    products: products
+  };
+  try {
+    const j = await postSet('/save-all', body);
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+function toggleSwatch(pid, colour) {
+  const cb = document.querySelector('input[data-prod="' + pid + '"][data-kind="colour"][value="' + colour + '"]');
+  if (cb) { cb.checked = !cb.checked; markDirty(); }
+}
+async function saveDefaultColor(pid) {
+  if (!currentSet) return;
+  const sid = safeId(pid);
+  const colour = document.getElementById('defcol-' + sid).value;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/default-color', { colour: colour });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function saveProductPlacement(pid) {
+  if (!currentSet) return;
+  const sid = safeId(pid);
+  const placement = {
+    x: +document.getElementById('px-' + sid).value,
+    y: +document.getElementById('py-' + sid).value,
+    scale: +document.getElementById('ps-' + sid).value,
+    angle: +document.getElementById('pa-' + sid).value
+  };
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/lock', { locked: false, placement: placement });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
+}
+async function refreshProduct(pid) {
+  if (!currentSet) return;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/refresh', {});
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
 }
 async function saveVariants(pid) {
   if (!currentSet) return alert('Create a set first.');
@@ -474,7 +759,14 @@ async function previewMockup(pid) {
   const box = document.getElementById('preview-' + sid);
   box.innerHTML = '<small>Making preview...</small>';
   const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
-  let photo = (p && (p.hero_image || (p.images || [])[0] || p.image || p._photo)) || '';
+  let photo = '';
+  // Prefer the BARE photo (never a rendered mockup) as render input.
+  try {
+    const pr = await fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo?bare=1');
+    const pj = await pr.json();
+    if (pj.photo) photo = pj.photo;
+  } catch (e) {}
+  if (!photo) photo = (p && (p.image || (p.images || [])[0] || p._photo)) || '';
   if (!photo) {
     try {
       const pr = await fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo');
@@ -490,6 +782,7 @@ async function previewMockup(pid) {
     const r = await fetch('/api/sets/' + currentSet.id + '/mockups', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Preview failed.');
+    if (j.errors && j.errors[pid]) throw new Error(j.errors[pid]);
     const url = j.mockups[pid];
     currentSet.products.forEach(function(x) { if (x.product_id === pid) { x.mockups = [url]; if (!x.hero_image) x.hero_image = url; } });
     box.innerHTML = '<small class="ok">Preview ready. See the Design panel above.</small>';
@@ -497,6 +790,36 @@ async function previewMockup(pid) {
     renderProducts();
     renderCentreMockup();
   } catch (e) { box.innerHTML = '<small>' + esc(e.message) + '</small>'; }
+}
+async function previewAllMockups() {
+  if (!currentSet) return alert('Create a set first.');
+  const box = document.getElementById('previewAllResult');
+  box.innerHTML = '<small>Rendering every product...</small>';
+  let ok = 0, fail = 0;
+  const first = selectedPid;
+  for (let i = 0; i < currentSet.products.length; i++) {
+    const pid = currentSet.products[i].product_id;
+    const before = document.getElementById('preview-' + safeId(pid));
+    await previewMockup(pid);
+    const txt = before ? before.textContent : '';
+    if (txt.indexOf('Preview ready') !== -1) ok++; else fail++;
+  }
+  selectedPid = currentSet.products[0] ? currentSet.products[0].product_id : first;
+  renderProducts();
+  renderCentreMockup();
+  box.innerHTML = '<p><small class="ok">' + ok + ' mockup(s) ready</small>' + (fail ? ' <span class="warn">' + fail + ' failed, see each product card</span>' : '') + '</p>';
+}
+function tapToPlace(ev) {
+  if (!currentSet) return;
+  const img = document.getElementById('centreImg');
+  const rect = img.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const x = (ev.clientX - rect.left) / rect.width;
+  const y = (ev.clientY - rect.top) / rect.height;
+  document.getElementById('x').value = Math.min(1, Math.max(0, x)).toFixed(2);
+  document.getElementById('y').value = Math.min(1, Math.max(0, y)).toFixed(2);
+  showVals();
+  markDirty();
 }
 function aidCenterH() { document.getElementById('x').value = 0.5; showVals(); }
 function aidCenterV() { document.getElementById('y').value = 0.5; showVals(); }
@@ -579,6 +902,7 @@ function positionPlaceBox() {
   box.style.height = hPct + '%';
   box.style.left = (pl.x * 100 - wPct / 2) + '%';
   box.style.top = (pl.y * 100 - hPct / 2) + '%';
+  box.style.transform = 'rotate(' + (pl.angle || 0) + 'deg)';
 }
 function renderArtworkSpec() {
   const box = document.getElementById('artworkSpec');
@@ -597,14 +921,50 @@ function renderLayers() {
   rows.push('<div class="layerrow"><span><b>Design</b><small> (whole set)</small>' + (currentSet.design_url ? '' : ' <small>none uploaded</small>') + '</span>'
     + (sel ? '<button class="secondary" onclick="toggleDesignHide(\'' + esc(sel.product_id) + '\')">' + (sel.hide_design ? 'Show on this product' : 'Hide on this product') + '</button>' : '')
     + '<button class="danger" onclick="removeDesign()">Remove design</button></div>');
-  (currentSet.text_layers || []).forEach(function(l) {
+  (currentSet.text_layers || []).forEach(function(l, idx) {
     const eye = l.hidden ? 'Show' : 'Hide';
-    rows.push('<div class="layerrow"><span><b>Text:</b> ' + esc(l.content) + ' <small>(' + esc(l.font) + ', ' + l.size + 'px, ' + esc(l.colour) + (l.hidden ? ', hidden' : '') + ')</small></span>'
+    const pos = (l.x !== undefined && l.y !== undefined) ? ' @ ' + (+l.x).toFixed(2) + ', ' + (+l.y).toFixed(2) : ' (centred on placement)';
+    rows.push('<div class="layerrow"><span><b>Text:</b> ' + esc(l.content) + ' <small>(' + esc(l.font) + ', ' + l.size + 'px, ' + esc(l.colour) + pos + (l.hidden ? ', hidden' : '') + ')</small></span>'
       + '<button class="secondary" onclick="toggleLayerEye(\'' + esc(l.id) + '\')">' + eye + '</button>'
+      + '<button class="secondary" onclick="editLayer(\'' + esc(l.id) + '\')">Edit</button>'
+      + '<button class="secondary" onclick="moveLayer(\'' + esc(l.id) + '\', -1)">Up</button>'
+      + '<button class="secondary" onclick="moveLayer(\'' + esc(l.id) + '\', 1)">Down</button>'
       + (sel ? '<button class="secondary" onclick="hideLayerOnProduct(\'' + esc(sel.product_id) + '\', \'' + esc(l.id) + '\')">This product</button>' : '')
       + '<button class="danger" onclick="deleteLayer(\'' + esc(l.id) + '\')">All products</button></div>');
   });
   box.innerHTML = rows.join('');
+}
+function editLayer(lid) {
+  const l = (currentSet.text_layers || []).filter(function(x) { return x.id === lid; })[0];
+  if (!l) return;
+  editingLayerId = lid;
+  document.getElementById('layerText').value = l.content || '';
+  document.getElementById('layerFont').value = l.font || 'sans';
+  document.getElementById('layerSize').value = l.size || 120;
+  document.getElementById('layerColour').value = l.colour || '#111111';
+  document.getElementById('layerCase').value = l.lettercase || 'none';
+  document.getElementById('layerRotation').value = l.rotation || 0;
+  document.getElementById('layerOpacity').value = l.opacity === undefined ? 100 : Math.round(l.opacity * 100);
+  document.getElementById('layerX').value = l.x === undefined ? 0.5 : l.x;
+  document.getElementById('layerY').value = l.y === undefined ? 0.47 : l.y;
+  document.getElementById('layerXVal').textContent = (+document.getElementById('layerX').value).toFixed(2);
+  document.getElementById('layerYVal').textContent = (+document.getElementById('layerY').value).toFixed(2);
+  document.getElementById('layerSubmitBtn').textContent = 'Save layer edit';
+  document.getElementById('layerCancelBtn').style.display = 'inline-block';
+  document.getElementById('layerFormDetails').open = true;
+  document.getElementById('layerFormDetails').scrollIntoView();
+}
+function cancelLayerEdit() {
+  editingLayerId = null;
+  document.getElementById('layerSubmitBtn').textContent = 'Add text layer';
+  document.getElementById('layerCancelBtn').style.display = 'none';
+}
+async function moveLayer(lid, dir) {
+  if (!currentSet) return;
+  try {
+    const j = await postSet('/layers/' + encodeURIComponent(lid) + '/move', { direction: dir });
+    refreshAfterSet(j);
+  } catch (e) { alert(e.message); }
 }
 async function addTextLayer() {
   if (!currentSet) return alert('Create a set first.');
@@ -615,12 +975,22 @@ async function addTextLayer() {
     colour: document.getElementById('layerColour').value,
     lettercase: document.getElementById('layerCase').value,
     rotation: document.getElementById('layerRotation').value,
-    opacity: document.getElementById('layerOpacity').value
+    opacity: document.getElementById('layerOpacity').value,
+    x: document.getElementById('layerX').value,
+    y: document.getElementById('layerY').value
   };
   try {
-    const j = await postSet('/layers', body);
-    refreshAfterSet(j.set);
-    document.getElementById('layerResult').innerHTML = '<p class="ok">Text layer added. Re-run Preview mockup to see it.</p>';
+    let j;
+    if (editingLayerId) {
+      j = await postSet('/layers/' + encodeURIComponent(editingLayerId) + '/edit', body);
+      refreshAfterSet(j);
+      cancelLayerEdit();
+      document.getElementById('layerResult').innerHTML = '<p class="ok">Text layer updated. Re-run Preview mockup to see it.</p>';
+    } else {
+      j = await postSet('/layers', body);
+      refreshAfterSet(j.set);
+      document.getElementById('layerResult').innerHTML = '<p class="ok">Text layer added. Re-run Preview mockup to see it.</p>';
+    }
   } catch (e) { document.getElementById('layerResult').innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function toggleLayerEye(lid) {
@@ -768,8 +1138,13 @@ async function previewPublish() {
   box.innerHTML = '<small>Checking...</small>';
   try {
     const j = await postSet('/publish-draft', { dry_run: true });
-    const names = j.products.map(function(p) { return esc(p.title) + ' (' + p.variants.length + ' variants)'; }).join('<br>');
-    box.innerHTML = '<p class="ok">Preview only, nothing created.</p><p>' + names + '</p><p><small>' + esc(j.note) + '</small></p>';
+    const rows = (j.checklist || j.products).map(function(p) {
+      const variants = p.variants && p.variants.length !== undefined ? p.variants.length : p.variants;
+      const ready = p.ready !== undefined ? p.ready : true;
+      return '<div class="layerrow"><span>' + esc(p.title) + ' (' + variants + ' variants, profit ' + (p.profit === null || p.profit === undefined ? 'not set' : p.profit) + ')</span><span>' + (ready ? '<span class="ok">Ready</span>' : '<span class="warn">Not ready</span>') + '</span></div>';
+    }).join('');
+    const warns = (j.warnings || []).map(function(w) { return '<p><small class="warn">' + esc(w) + '</small></p>'; }).join('');
+    box.innerHTML = '<p class="ok">Preview only, nothing created.</p>' + rows + warns + '<p><small>' + esc(j.note) + '</small></p>';
   } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function publishDraft() {
@@ -781,7 +1156,26 @@ async function publishDraft() {
     const j = await postSet('/publish-draft', {});
     currentSet.publish_state = 'published_draft'; currentSet.artwork_locked = true;
     renderPublishStatus(); renderDraftLine();
-    box.innerHTML = '<p class="ok">Published as draft. Shopify IDs: ' + esc((j.shopify_ids || []).join(', ')) + '</p>';
+    const ids = j.shopify_ids || [];
+    let html = '<p class="ok">Published as draft. Shopify IDs: ' + esc(ids.join(', ')) + '</p>';
+    if (j.partial) html += '<p class="warn">Partial publish: ' + j.created.length + ' of ' + j.total + ' created. Tap Publish again to resume from product ' + (j.next_index + 1) + '.</p>';
+    if (ids.length) html += '<p><button class="secondary" onclick="createSetPage()">Create hidden set page on Shopify</button> <small>Creates a hidden page (not linked anywhere) so the set can be shared later. It will NOT appear in the store.</small></p>';
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
+}
+async function createSetPage() {
+  if (!currentSet) return alert('Create a set first.');
+  const box = document.getElementById('publishResult');
+  try {
+    const body = {
+      title: currentSet.name,
+      handle: currentSet.slug || null,
+      body_html: currentSet.description || ''
+    };
+    const r = await fetch('/api/sets/' + currentSet.id + '/create-page', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Page creation failed.');
+    box.innerHTML = '<p class="ok">Hidden set page created (Shopify page ' + esc(String(j.page_id)) + '). It is not linked anywhere in the store.</p>';
   } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function addProduct() {
@@ -851,7 +1245,7 @@ async function searchProducts() {
   box.innerHTML = '<small>Searching...</small>';
   let r;
   try {
-    r = await fetch('/api/products/search?q=' + encodeURIComponent(q));
+  r = await fetch('/api/products/search?q=' + encodeURIComponent(q) + '&limit=50');
   } catch (e) {
     if (mySeq !== searchSeq) return;
     box.innerHTML = '<small>Search failed. Check connection and try again.</small>';
@@ -897,29 +1291,54 @@ async function uploadDesign() {
   if (!currentSet) return alert('Create a set first.');
   const files = document.getElementById('designFile').files;
   if (!files.length) return alert('Choose a design file first.');
-  const fd = new FormData(); fd.append('design', files[0]);
-  const r = await fetch('/api/sets/' + currentSet.id + '/upload', { method: 'POST', body: fd });
-  const j = await r.json();
-  if (!r.ok) { document.getElementById('uploadResult').innerHTML = '<p class="warn">' + esc(j.error || 'Upload failed.') + '</p>'; return; }
-  currentSet.design_url = j.url;
-  currentSet.design_width = j.validation.width;
-  currentSet.design_height = j.validation.height;
-  currentSet.design_dpi = j.validation.dpi_estimate;
-  const v = j.validation || {};
-  const warns = (v.warnings || []).map(function(w) { return '<br><small>' + esc(w) + '</small>'; }).join('');
-  document.getElementById('uploadResult').innerHTML = '<p class="ok">Uploaded and checked: transparent PNG, ' + v.width + ' x ' + v.height + ' px, about ' + v.dpi_estimate + ' DPI estimated.' + warns + '</p>';
-  renderArtworkSpec();
+  const box = document.getElementById('uploadResult');
+  box.innerHTML = '<small>Uploading...</small>';
+  async function uploadOne(setId, file) {
+    const fd = new FormData(); fd.append('design', file);
+    const r = await fetch('/api/sets/' + setId + '/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Upload failed.');
+    return j;
+  }
+  try {
+    const j = await uploadOne(currentSet.id, files[0]);
+    currentSet.design_url = j.url;
+    currentSet.design_width = j.validation.width;
+    currentSet.design_height = j.validation.height;
+    currentSet.design_dpi = j.validation.dpi_estimate;
+    const v = j.validation || {};
+    const warns = (v.warnings || []).map(function(w) { return '<br><small>' + esc(w) + '</small>'; }).join('');
+    let html = '<p class="ok">Uploaded and checked: transparent PNG, ' + v.width + ' x ' + v.height + ' px, about ' + v.dpi_estimate + ' DPI estimated.' + warns + '</p>';
+    // Extra files: duplicate this set, then upload each extra as that copy's design.
+    for (let i = 1; i < files.length; i++) {
+      try {
+        const dr = await fetch('/api/sets/' + currentSet.id + '/duplicate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({}) });
+        const dj = await dr.json();
+        if (!dr.ok) throw new Error(dj.error || 'Duplicate failed.');
+        await uploadOne(dj.id, files[i]);
+        allSets.push(dj);
+        html += '<p><small>Extra file ' + (i + 1) + ' saved as a duplicate set: ' + esc(dj.name) + '.</small></p>';
+      } catch (e) {
+        html += '<p><span class="warn">Extra file ' + (i + 1) + ' failed: ' + esc(e.message) + '</span></p>';
+      }
+    }
+    box.innerHTML = html;
+    renderSetList();
+    renderArtworkSpec();
+  } catch (e) { box.innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function saveMaster() {
   if (!currentSet) return alert('Create a set first.');
-  const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: 0 };
+  const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value };
   const r = await fetch('/api/sets/' + currentSet.id + '/master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ placement }) });
   currentSet = await r.json();
   syncCache();
+  clearDirty();
   document.getElementById('masterResult').innerHTML = '<p>Master saved. Every locked product now follows it.</p>';
   positionPlaceBox();
 }
 showVals();
+checkAuth();
 loadSetList();
 loadCatalogTemplates();
 </script>

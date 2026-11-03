@@ -114,6 +114,14 @@ production-ready. Fix round 3 closed the gaps; full test evidence in
   compare-at must be higher than sale; publish still blocks negative
   profit. Per-variant store prices are used when no flat sale price is
   set; combine mode adds a Style option (product title) per variant.
+  A product is publishable on price when it has a flat sale price or
+  at least one priced pair: real listings are non-rectangular (the
+  Oregon tee has 88 variants over 12 colours x 8 sizes), so unpriced
+  pairs are skipped on publish and named in the dry-run warnings, not
+  a blocker. The variant-limit guard counts variants that will
+  actually be created, so the full Oregon set in combine mode
+  (184 variants) is over Shopify's 100-per-product cap and must be
+  split or trimmed; split mode (88/48/48) fits.
 - **Publish safety.** Dry-run returns warnings plus a per-product
   readiness checklist and creates nothing. A real publish never gets
   stuck "launching": a failure records state "failed" with partial

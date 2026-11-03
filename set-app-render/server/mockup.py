@@ -1,8 +1,11 @@
 """Mockup engine: draw a design onto a product photo at a placement.
 
 Placement semantics (shared with the UI and the set data model):
-  x, y  = centre of the design as a fraction of the photo (0-1).
-  scale = design width as a fraction of the photo width.
+  x, y  = centre of the design as a fraction of the photo (0-1),
+  clamped on render/save to the fixed print area (x 0.25-0.75,
+  y 0.20-0.70).
+  scale = design width as a fraction of the photo width, capped
+  at 0.5 (the print-area box width).
   angle = rotation in degrees, 0 = upright.
 
 A set has one master_placement. A product follows the master unless it is
@@ -52,14 +55,33 @@ def composite(design_path, photo_path, placement, output_path):
     return output_path
 
 
+def clamp_to_print_area(placement):
+    """Clamp a placement to the fixed print area (see app.js
+    PRINT_AREA): centre x in [0.25, 0.75], y in [0.20, 0.70],
+    width scale capped at 0.5 (the box width). Legacy out-of-box
+    placements render clamped, so preview and published mockups
+    agree instead of diverging."""
+    if not placement:
+        return placement
+    out = dict(placement)
+    try:
+        out["x"] = min(0.75, max(0.25, float(out.get("x", 0.5))))
+        out["y"] = min(0.70, max(0.20, float(out.get("y", 0.45))))
+        out["scale"] = min(0.5, max(0.1, float(out.get("scale", 0.5))))
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
 def effective_placement(set_obj, product_id):
-    """Placement a product actually renders with: override if unlocked."""
+    """Placement a product actually renders with: override if unlocked,
+    always clamped to the fixed print area."""
     for p in set_obj.get("products", []):
         if p.get("product_id") == product_id:
             if not p.get("locked", True) and p.get("override_placement"):
-                return p["override_placement"]
-            return set_obj["master_placement"]
-    return set_obj["master_placement"]
+                return clamp_to_print_area(p["override_placement"])
+            return clamp_to_print_area(set_obj["master_placement"])
+    return clamp_to_print_area(set_obj["master_placement"])
 
 
 def render_set_mockups(set_obj, design_path, photo_by_product, out_dir):

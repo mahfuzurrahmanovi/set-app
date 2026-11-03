@@ -156,11 +156,16 @@ def main():
     check("settings page 200", code == 200, code)
     for marker in ["Golden State Of", "Designer", "Delete campaign",
                    "Details", "Storefront", "Conversion tools",
-                   "Cloak &amp; Dagger", "Upsells", "Tik Tok Pixel",
-                   "Snapchat Pixel", "Override default pixels",
+                   "Cloak &amp; Dagger", "Upsells",
                    "Description", "Use How To Order text",
                    "fansfit.shop/"]:
         check(f"settings page has {marker}", marker in body)
+    # Mockup fix (2026-11-03 22:43, Fix 5): pixel + End fields removed.
+    for removed in ["Tik Tok Pixel", "Snapchat Pixel",
+                    "Override default pixels", "Custom Audience",
+                    "Conversions API", "campTiktok", "campSnapchat",
+                    "campFbAudience", "campEnd"]:
+        check(f"settings page has no {removed}", removed not in body)
     check("settings page links back to /campaigns",
           'href="/campaigns"' in body)
     check("settings page links to its designer",
@@ -281,7 +286,7 @@ var window = { fetch: async function() { return { json: async function() { retur
 var document = {
   getElementById: function(id) {
     if (typeof CASE_MISSING !== 'undefined' && CASE_MISSING && id.indexOf('camp') === 0) return null;
-    return { style: {}, textContent: '', value: '', innerHTML: '', className: '' };
+    return { style: {}, textContent: '', value: '', innerHTML: '', className: '', addEventListener: function() {} };
   },
   addEventListener: function() {},
   querySelectorAll: function() { return []; },

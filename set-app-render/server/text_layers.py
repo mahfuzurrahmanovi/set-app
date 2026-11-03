@@ -161,6 +161,14 @@ def composite_layers(photo_path, design_path, placement, layer_pngs,
         else:
             path, lx, ly = item, None, None
         layer = Image.open(path).convert("RGBA")
+        # Clamp layer positions to the fixed print area, matching
+        # the centre preview: centre x in [0.25, 0.75], y in
+        # [0.20, 0.70]. Without this, a layer at x=0.10 showed at
+        # the box edge in the preview but rendered at 0.10 here.
+        if lx is not None:
+            lx = min(0.75, max(0.25, float(lx)))
+        if ly is not None:
+            ly = min(0.70, max(0.20, float(ly)))
         px = float(lx) * W if lx is not None else cx
         py = float(ly) * H if ly is not None else cy
         img.alpha_composite(

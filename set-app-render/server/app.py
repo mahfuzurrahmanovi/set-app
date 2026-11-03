@@ -1359,11 +1359,24 @@ def set_lock(sid, pid):
         return jsonify({"error": "set not found"}), 404
     for p in sets[sid]["products"]:
         if p["product_id"] == pid:
+            before = p.get("override_placement")
             p["locked"] = bool(body.get("locked", True))
             if "placement" in body and body["placement"] is not None:
-                p["override_placement"] = body["placement"]
+                # Clamp to the fixed print area, like every other
+                # placement save, instead of storing raw values.
+                placement, placement_err = _validate_placement(
+                    body["placement"])
+                if placement_err:
+                    return jsonify({"error": placement_err}), 400
+                p["override_placement"] = placement
             if p["locked"]:
                 p["override_placement"] = None
+            # A changed override changes what renders, so mark
+            # mockups stale until re-previewed (previously the
+            # version check kept reporting current and publish
+            # could ship the pre-drag image).
+            if p.get("override_placement") != before:
+                bump_design_version(sets[sid])
             save_sets(sets)
             return jsonify(sets[sid])
     return jsonify({"error": "product not in set"}), 404
@@ -1439,10 +1452,16 @@ def _validate_placement(raw):
         angle = float(raw.get("angle", 0))
     except (KeyError, TypeError, ValueError):
         return None, "placement needs numeric x, y, scale"
-    if not (0 <= x <= 1 and 0 <= y <= 1):
-        return None, "placement x and y must be between 0 and 1"
-    if not (0.1 <= scale <= 1):
-        return None, "placement size must be between 0.1 and 1"
+    # Review fix (mockup fix, B1): clamp to the FIXED print area
+    # (left 25%, top 20%, width 50%, height 50%) and cap scale at
+    # 0.5 (the box width), instead of merely range-checking 0-1.
+    # This is what makes preview and published mockups agree: a
+    # slider at 0.10 can no longer save/publish outside the box.
+    # Rotation is about the design centre and may extend past the
+    # box corners at large angles; only centre and width are clamped.
+    x = min(0.75, max(0.25, x))
+    y = min(0.70, max(0.20, y))
+    scale = min(0.5, max(0.1, scale))
     if not (-180 <= angle <= 180):
         return None, "placement angle must be between -180 and 180"
     return {"x": x, "y": y, "scale": scale, "angle": angle}, None
@@ -1502,12 +1521,22 @@ def save_all(sid):
             return jsonify({
                 "error": "Compare-at must be higher than the sale price."
             }), 400
+        override = None
+        if "override_placement" in entry and entry["override_placement"] is not None:
+            # SaveAll must carry unlocked overrides too: previously
+            # a drag on an unlocked product was silently discarded
+            # by Save, which then reported saved.
+            override, override_err = _validate_placement(
+                entry["override_placement"])
+            if override_err:
+                return jsonify({"error": override_err}), 400
         product_updates[pid] = {
             "colours": ([str(c) for c in entry["colours"]]
                         if "colours" in entry else None),
             "sizes": ([str(z) for z in entry["sizes"]]
                       if "sizes" in entry else None),
             "prices": prices,
+            "override_placement": override,
         }
     if placement is not None and placement != s.get("master_placement"):
         s["master_placement"] = placement
@@ -1534,6 +1563,10 @@ def save_all(sid):
             p["colours"] = upd["colours"]
         if upd["sizes"] is not None:
             p["sizes"] = upd["sizes"]
+        if upd.get("override_placement") is not None and \
+                p.get("override_placement") != upd["override_placement"]:
+            p["override_placement"] = upd["override_placement"]
+            bump_design_version(s)
         for field, value in upd["prices"].items():
             p[field] = float(value) if value is not None else None
     s["draft_saved_at"] = now_iso()

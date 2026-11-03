@@ -63,32 +63,6 @@
 </div>
 
 <div class="card">
-  <h2>Tik Tok Pixel</h2>
-  <label>Tik Tok Pixel</label><input id="campTiktok" placeholder="Pixel ID" value="{{ view.campaign.tiktok_pixel }}">
-</div>
-
-<div class="card">
-  <h2>Snapchat Pixel</h2>
-  <label>Snapchat Pixel</label><input id="campSnapchat" placeholder="Pixel ID" value="{{ view.campaign.snapchat_pixel }}">
-</div>
-
-<div class="card">
-  <h2>Override default pixels</h2>
-  <p><small>New Facebook pixel</small></p>
-  <label>Custom Audience</label><input id="campFbAudience" placeholder="Custom Audience" value="{{ view.campaign.facebook.custom_audience }}">
-  <label>Conversions API access token</label><input id="campFbCapi" placeholder="Access token" value="{{ view.campaign.facebook.conversions_api_token }}">
-  <p><small>Old Facebook pixels</small></p>
-  <label>Key Page View (land on buy page)</label><input id="campFbPageView" placeholder="Pixel ID" value="{{ view.campaign.facebook.page_view_pixel }}">
-  <label>Add to Cart (add to cart)</label><input id="campFbAddToCart" placeholder="Pixel ID" value="{{ view.campaign.facebook.add_to_cart_pixel }}">
-  <label>Checkout (convert to sale)</label><input id="campFbCheckout" placeholder="Pixel ID" value="{{ view.campaign.facebook.checkout_pixel }}">
-</div>
-
-<div class="card">
-  <h2>End date</h2>
-  <label>End (optional, e.g. 3/1/26)</label><input id="campEnd" placeholder="e.g. 3/1/26" value="{{ view.campaign.end_date or '' }}">
-</div>
-
-<div class="card">
   <h2>Description</h2>
   <label>Description</label><textarea id="campDesc" rows="6" placeholder="Campaign description">{{ view.description }}</textarea>
   <button class="secondary" onclick="useHowToOrder()">Use How To Order text</button>

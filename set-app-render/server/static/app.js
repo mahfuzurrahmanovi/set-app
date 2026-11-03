@@ -2,6 +2,75 @@
 let currentSet = null;
 let allSets = [];
 let selectedPid = null;
+// Fixed print area (mockup fix, Ovi 2026-11-03 22:43): the dashed box
+// is ONE fixed chest area, left 25%, top 20%, width 50%, height 50%
+// of the mockup image. Only the design inside it moves. The box
+// geometry never changes with placement.
+const PRINT_AREA = { left: 0.25, top: 0.20, width: 0.50, height: 0.50 };
+// Clamp a placement to the fixed print area, in one place, so the
+// centre preview, the sliders, and every save path agree. Scale is
+// capped at 0.5 because the box is 50% of the mockup width: a larger
+// scale would spill past the box. Rotation is about the design
+// centre and may extend past the box corners at large angles; only
+// the centre and the width are clamped.
+function clampPlacement(pl) {
+  const p = pl || {};
+  return {
+    x: Math.min(PRINT_AREA.left + PRINT_AREA.width, Math.max(PRINT_AREA.left, (p.x === undefined ? 0.5 : +p.x))),
+    y: Math.min(PRINT_AREA.top + PRINT_AREA.height, Math.max(PRINT_AREA.top, (p.y === undefined ? 0.45 : +p.y))),
+    scale: Math.min(0.5, Math.max(0.1, (p.scale === undefined ? 0.5 : +p.scale))),
+    angle: (p.angle === undefined ? 0 : +p.angle)
+  };
+}
+// Printify flat-photo templates, loaded from /api/catalog/templates.
+let catalogTemplates = null;
+let catalogTemplatesTried = false;
+function slugify(name) {
+  return (name || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+let slugManual = false;
+let campaignSlugManual = false;
+function bindSlugAuto() {
+  const nameEl = document.getElementById('campName');
+  const slugEl = document.getElementById('campSlug');
+  if (nameEl && slugEl && !nameEl._slugBound) {
+    nameEl._slugBound = true;
+    nameEl.addEventListener('input', function() {
+      if (slugManual) return;
+      slugEl.value = slugify(nameEl.value);
+      const pv = document.getElementById('campUrlPreview');
+      if (pv) pv.textContent = 'fansfit.shop/' + slugEl.value;
+    });
+    slugEl.addEventListener('input', function() { slugManual = true; });
+  }
+  const cName = document.getElementById('campaignName');
+  const cSlug = document.getElementById('campaignSlug');
+  if (cName && cSlug && !cName._slugBound) {
+    cName._slugBound = true;
+    cName.addEventListener('input', function() {
+      if (campaignSlugManual) return;
+      cSlug.value = slugify(cName.value);
+      const pv = document.getElementById('campaignSlugPreview');
+      if (pv) pv.textContent = 'fansfit.shop/' + cSlug.value;
+    });
+    cSlug.addEventListener('input', function() { campaignSlugManual = true; });
+  }
+}
+function flatTemplateForTitle(title) {
+  if (!title || !catalogTemplates) return null;
+  const t = String(title).toLowerCase();
+  if (t.indexOf('v-neck') !== -1 || t.indexOf('v neck') !== -1) {
+    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('v-neck') !== -1; })[0] || null;
+  }
+  if (t.indexOf('long sleeve') !== -1) {
+    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('ultra cotton long sleeve') !== -1; })[0]
+      || catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('long sleeve') !== -1; })[0] || null;
+  }
+  return null;
+}
 let viewSide = 'front';
 let lastSearchResults = [];
 let csrfToken = null;
@@ -172,8 +241,10 @@ function checkedCampaignIds() {
 async function createCampaign() {
   const name = document.getElementById('campaignName').value.trim();
   if (!name) return alert('Type a campaign name first.');
+  const slugEl = document.getElementById('campaignSlug');
+  const slug = slugEl ? slugEl.value.trim() : slugify(name);
   try {
-    const r = await fetch('/api/campaigns', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: name }) });
+    const r = await fetch('/api/campaigns', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: name, slug: slug }) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Create campaign failed.');
     document.getElementById('campaignName').value = '';
@@ -236,16 +307,12 @@ function fillCampaignSettings() {
   document.getElementById('campHideSearch').checked = !!c.hide_from_search_engines;
   document.getElementById('campSocialButtons').checked = !!c.social_buttons;
   document.getElementById('campUpsell').value = (c.upsell_discount === undefined || c.upsell_discount === null) ? '' : c.upsell_discount;
-  document.getElementById('campTiktok').value = c.tiktok_pixel || '';
-  document.getElementById('campSnapchat').value = c.snapchat_pixel || '';
-  document.getElementById('campFbAudience').value = fb.custom_audience || '';
-  document.getElementById('campFbCapi').value = fb.conversions_api_token || '';
-  document.getElementById('campFbPageView').value = fb.page_view_pixel || '';
-  document.getElementById('campFbAddToCart').value = fb.add_to_cart_pixel || '';
-  document.getElementById('campFbCheckout').value = fb.checkout_pixel || '';
-  document.getElementById('campEnd').value = c.end_date || '';
+  // Pixel + End fields were removed from settings (Ovi 2026-11-03
+  // 22:43). Old values stay in stored data and are tolerated by the
+  // server, but the UI neither shows nor sends them.
   document.getElementById('campDesc').value = currentSet.description || '';
   document.getElementById('campUrlPreview').textContent = 'fansfit.shop/' + (currentSet.slug || '');
+  bindSlugAuto();
 }
 async function saveCampaignSettings() {
   if (!currentSet) return alert('Open a campaign first.');
@@ -265,17 +332,8 @@ async function saveCampaignSettings() {
       fudge_factor: document.getElementById('campFudge').value.trim(),
       hide_from_search_engines: document.getElementById('campHideSearch').checked,
       social_buttons: document.getElementById('campSocialButtons').checked,
-      upsell_discount: document.getElementById('campUpsell').value.trim(),
-      end_date: document.getElementById('campEnd').value.trim(),
-      tiktok_pixel: document.getElementById('campTiktok').value.trim(),
-      snapchat_pixel: document.getElementById('campSnapchat').value.trim(),
-      facebook: {
-        custom_audience: document.getElementById('campFbAudience').value.trim(),
-        conversions_api_token: document.getElementById('campFbCapi').value.trim(),
-        page_view_pixel: document.getElementById('campFbPageView').value.trim(),
-        add_to_cart_pixel: document.getElementById('campFbAddToCart').value.trim(),
-        checkout_pixel: document.getElementById('campFbCheckout').value.trim()
-      }
+      upsell_discount: document.getElementById('campUpsell').value.trim()
+      // Pixel + End fields removed from settings: not sent.
     }
   };
   try {
@@ -683,14 +741,17 @@ async function saveAll() {
       sizes: sizes,
       sale_price: saleEl ? saleEl.value.trim() : '',
       compare_at_price: cmpEl ? cmpEl.value.trim() : '',
-      base_cost: costEl ? costEl.value.trim() : ''
+      base_cost: costEl ? costEl.value.trim() : '',
+      // Unlocked overrides must travel with Save, or a drag on an
+      // unlocked product is silently discarded by saveAll.
+      override_placement: (!p.locked && p.override_placement) ? p.override_placement : undefined
     };
   });
   const val = function(id, fallback) { const e = document.getElementById(id); return e ? e.value.trim() : fallback; };
   const mp = currentSet.master_placement || {};
   const xv = document.getElementById('x'); const yv = document.getElementById('y'); const sv = document.getElementById('s'); const av = document.getElementById('angle');
   const body = {
-    placement: { x: xv ? +xv.value : mp.x, y: yv ? +yv.value : mp.y, scale: sv ? +sv.value : mp.scale, angle: av ? +av.value : mp.angle },
+    placement: clampPlacement({ x: xv ? +xv.value : mp.x, y: yv ? +yv.value : mp.y, scale: sv ? +sv.value : mp.scale, angle: av ? +av.value : mp.angle }),
     details: {
       name: val('detailName', currentSet.name || ''),
       slug: val('detailSlug', currentSet.slug || ''),
@@ -722,12 +783,12 @@ async function saveDefaultColor(pid) {
 async function saveProductPlacement(pid) {
   if (!currentSet) return;
   const sid = safeId(pid);
-  const placement = {
+  const placement = clampPlacement({
     x: +document.getElementById('px-' + sid).value,
     y: +document.getElementById('py-' + sid).value,
     scale: +document.getElementById('ps-' + sid).value,
     angle: +document.getElementById('pa-' + sid).value
-  };
+  });
   try {
     const j = await postSet('/products/' + encodeURIComponent(pid) + '/lock', { locked: false, placement: placement });
     refreshAfterSet(j);
@@ -853,34 +914,47 @@ async function previewAllMockups() {
   box.innerHTML = '<p><small class="ok">' + ok + ' mockup(s) ready</small>' + (fail ? ' <span class="warn">' + fail + ' failed, see each product card</span>' : '') + '</p>';
 }
 let lastTouchAt = 0;
-let centreDrag = null;
 function placeAt(clientX, clientY) {
   if (!currentSet) return;
   const img = document.getElementById('centreImg');
   if (!img) return;
   const rect = img.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  const x = (clientX - rect.left) / rect.width;
-  const y = (clientY - rect.top) / rect.height;
-  document.getElementById('x').value = Math.min(1, Math.max(0, x)).toFixed(2);
-  document.getElementById('y').value = Math.min(1, Math.max(0, y)).toFixed(2);
-  // Review fix: positionPlaceBox() reads the SAVED master placement,
-  // so without this the dragged box snapped back to its old spot on
-  // every move. Update the live master placement too, so the box
-  // follows the pointer; Save still persists it.
-  if (currentSet) {
-    currentSet.master_placement = currentSet.master_placement || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
-    currentSet.master_placement.x = Math.min(1, Math.max(0, x));
-    currentSet.master_placement.y = Math.min(1, Math.max(0, y));
+  // Fixed print area: the DESIGN moves, clamped inside the box.
+  // The box itself never moves. On an UNLOCKED product the drag
+  // moves that product's override placement, never the master:
+  // writing to the master while an override is displayed silently
+  // moved every locked product while the centre appeared unchanged.
+  const clamped = clampPlacement({ x: (clientX - rect.left) / rect.width,
+                                   y: (clientY - rect.top) / rect.height,
+                                   scale: 0.5, angle: 0 });
+  const x = clamped.x, y = clamped.y;
+  const sel = selectedProduct();
+  if (currentSet && sel && !sel.locked) {
+    const base = clampPlacement(effectivePlacementOf(sel));
+    sel.override_placement = { x: x, y: y, scale: base.scale, angle: base.angle };
+    const sid = safeId(sel.product_id);
+    const pxEl = document.getElementById('px-' + sid); if (pxEl) pxEl.value = x.toFixed(2);
+    const pyEl = document.getElementById('py-' + sid); if (pyEl) pyEl.value = y.toFixed(2);
+  } else {
+    document.getElementById('x').value = x.toFixed(2);
+    document.getElementById('y').value = y.toFixed(2);
+    if (currentSet) {
+      currentSet.master_placement = currentSet.master_placement || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
+      currentSet.master_placement.x = x;
+      currentSet.master_placement.y = y;
+    }
   }
   showVals();
   markDirty();
+  positionPlaceBox();
 }
 function tapToPlace(ev) {
   // A tap already handled as a touch must not fire twice as a click.
   if (Date.now() - lastTouchAt < 500) return;
   placeAt(ev.clientX, ev.clientY);
 }
+let designDrag = null;
 function bindCentreDrag() {
   const img = document.getElementById('centreImg');
   const box = document.getElementById('placeBox');
@@ -897,32 +971,36 @@ function bindCentreDrag() {
   img.addEventListener('touchstart', function() {
     lastTouchAt = Date.now();
   }, { passive: true });
-  // Drag the dashed placement box itself, by touch or mouse. The
-  // drag writes into the same master sliders that Save persists,
-  // so dragging and the sliders always agree.
+  // Drag the DESIGN inside the fixed print area, by touch or mouse.
+  // The print area box itself never moves. Pointerdown on the box
+  // (which overlays the mockup, including the design image inside
+  // it) starts a design drag; a tap without moving places the
+  // design at that point; a drag moves it, clamped to the box.
+  // The drag writes into the same master sliders that Save persists.
   if (box) {
     box.addEventListener('pointerdown', function(ev) {
-      centreDrag = { moved: false, startX: ev.clientX, startY: ev.clientY };
+      designDrag = { moved: false, startX: ev.clientX, startY: ev.clientY, x: ev.clientX, y: ev.clientY };
       if (box.setPointerCapture) { try { box.setPointerCapture(ev.pointerId); } catch (e) {} }
       ev.preventDefault();
     });
     box.addEventListener('pointermove', function(ev) {
-      if (!centreDrag) return;
-      if (Math.abs(ev.clientX - centreDrag.startX) +
-          Math.abs(ev.clientY - centreDrag.startY) > 4) centreDrag.moved = true;
-      if (centreDrag.moved) placeAt(ev.clientX, ev.clientY);
+      if (!designDrag) return;
+      if (Math.abs(ev.clientX - designDrag.startX) +
+          Math.abs(ev.clientY - designDrag.startY) > 4) designDrag.moved = true;
+      if (designDrag.moved) placeAt(ev.clientX, ev.clientY);
     });
-    const endDrag = function() {
-      if (centreDrag && centreDrag.moved) lastTouchAt = Date.now();
-      centreDrag = null;
+    const endDesignDrag = function(ev) {
+      if (designDrag && !designDrag.moved && ev && ev.clientX !== undefined) placeAt(ev.clientX, ev.clientY);
+      if (designDrag && designDrag.moved) lastTouchAt = Date.now();
+      designDrag = null;
     };
-    box.addEventListener('pointerup', endDrag);
-    box.addEventListener('pointercancel', endDrag);
+    box.addEventListener('pointerup', endDesignDrag);
+    box.addEventListener('pointercancel', function() { designDrag = null; });
   }
 }
 function aidCenterH() { document.getElementById('x').value = 0.5; showVals(); }
 function aidCenterV() { document.getElementById('y').value = 0.5; showVals(); }
-function aidScaleToFit() { document.getElementById('x').value = 0.5; document.getElementById('y').value = 0.5; document.getElementById('s').value = 0.8; showVals(); }
+function aidScaleToFit() { document.getElementById('x').value = 0.5; document.getElementById('y').value = 0.45; document.getElementById('s').value = 0.5; showVals(); }
 function selectProduct(pid) {
   selectedPid = pid;
   renderProducts();
@@ -936,13 +1014,30 @@ function setViewSide(side) {
   renderCentreMockup();
 }
 function centreImageUrl(p) {
-  // BARE photo only, never a rendered mockup: a rendered mockup
-  // already has a design printed on it, so using it as the centre
-  // image stacks a new design on top of the old one.
+  // Gearlaunch-style base: a flat Printify product photo when a
+  // template matches this product type, otherwise the BARE store
+  // photo. Never a rendered mockup: one already has a design
+  // printed on it, so using it stacks a new design on the old one.
   if (!p) return '';
+  if (p.kind === 'catalog' && p.images && p.images[0]) {
+    p._flatTemplate = { title: p.title };
+    return p.images[0];
+  }
+  const flat = flatTemplateForTitle(p.title);
+  if (flat && flat.images && flat.images[0]) {
+    p._flatTemplate = flat;
+    return flat.images[0];
+  }
+  p._flatTemplate = null;
   const bare = (p.images && p.images[0]) || p.image || p._photoBare || '';
   if (bare && bare.indexOf('/static/mockups/') === -1) return bare;
   return '';
+}
+function mockupSourceLabel(p) {
+  if (!p) return '';
+  if (catalogTemplates === null) return 'Loading flat photo…';
+  if (p._flatTemplate) return 'Printify flat product photo' + (p._flatTemplate.brand ? ' (' + esc(p._flatTemplate.brand) + ')' : '');
+  return 'Not a Printify flat photo: bare store photo';
 }
 function renderCentreMockup() {
   const img = document.getElementById('centreImg');
@@ -959,6 +1054,15 @@ function renderCentreMockup() {
     return;
   }
   bindCentreDrag();
+  if (!catalogTemplatesTried) {
+    catalogTemplatesTried = true;
+    fetch('/api/catalog/templates').then(function(r) { return r.json(); }).then(function(j) {
+      catalogTemplates = j;
+      renderCentreMockup();
+    }).catch(function() { catalogTemplatesTried = false; });
+  }
+  const srcEl = document.getElementById('mockupSource');
+  if (srcEl && p) srcEl.innerHTML = '<small>' + mockupSourceLabel(p) + '</small>';
   if (!url) {
     img.style.display = 'none';
     box.style.display = 'none';
@@ -995,21 +1099,70 @@ function positionPlaceBox() {
   if (!img || !box) return;
   if (img.style.display === 'none' || viewSide === 'back') { box.style.display = 'none'; return; }
   const p = selectedProduct();
-  if (!p || !img.naturalWidth) { box.style.display = 'none'; return; }
-  const pl = effectivePlacementOf(p);
-  const pw = img.naturalWidth, ph = img.naturalHeight;
-  const dw = pl.scale * pw;
-  let dh = dw;
-  if (currentSet && currentSet.design_width && currentSet.design_height) {
-    dh = dw * (currentSet.design_height / currentSet.design_width);
-  }
-  const wPct = (dw / pw) * 100, hPct = (dh / ph) * 100;
+  if (!p) { box.style.display = 'none'; return; }
+  // FIXED print area: the box geometry never changes with placement.
+  // Only the design inside it moves. Design centre (pl.x, pl.y) is a
+  // fraction of the full mockup, clamped to the box; design width is
+  // pl.scale of the full mockup width, expressed against the box
+  // (box width is 50% of the mockup, so scale 0.5 fills the box).
   box.style.display = 'block';
-  box.style.width = wPct + '%';
-  box.style.height = hPct + '%';
-  box.style.left = (pl.x * 100 - wPct / 2) + '%';
-  box.style.top = (pl.y * 100 - hPct / 2) + '%';
-  box.style.transform = 'rotate(' + (pl.angle || 0) + 'deg)';
+  box.style.left = (PRINT_AREA.left * 100) + '%';
+  box.style.top = (PRINT_AREA.top * 100) + '%';
+  box.style.width = (PRINT_AREA.width * 100) + '%';
+  box.style.height = (PRINT_AREA.height * 100) + '%';
+  box.style.transform = 'none';
+  const pl = clampPlacement(effectivePlacementOf(p));
+  const cx = pl.x, cy = pl.y, scale = pl.scale;
+  // Visible text layers, each at its own position inside the box.
+  // Layer x/y are full-mockup fractions (null = placement centre);
+  // map them into the box, apply size, font, rotation and opacity.
+  // Layers are independent of the design-hide flag, so they render
+  // even when the design itself is hidden.
+  const oldLayers = box.querySelectorAll('.centreLayer');
+  oldLayers.forEach(function(el) { el.remove(); });
+  if (currentSet) {
+    const hiddenHere = (p && p.hidden_layers) || [];
+    (currentSet.text_layers || []).filter(function(l) { return !l.hidden && hiddenHere.indexOf(l.id) === -1; }).forEach(function(l) {
+      const lx = (l.x === undefined || l.x === null) ? cx : Math.min(PRINT_AREA.left + PRINT_AREA.width, Math.max(PRINT_AREA.left, +l.x));
+      const ly = (l.y === undefined || l.y === null) ? cy : Math.min(PRINT_AREA.top + PRINT_AREA.height, Math.max(PRINT_AREA.top, +l.y));
+      const span = document.createElement('div');
+      span.className = 'centreLayer';
+      span.textContent = l.content || '';
+      span.style.position = 'absolute';
+      span.style.left = (((lx - PRINT_AREA.left) / PRINT_AREA.width) * 100) + '%';
+      span.style.top = (((ly - PRINT_AREA.top) / PRINT_AREA.height) * 100) + '%';
+      span.style.transform = 'translate(-50%, -50%) rotate(' + (l.rotation || 0) + 'deg)';
+      span.style.color = l.colour || '#111111';
+      span.style.fontFamily = l.font === 'serif' ? 'serif' : (l.font === 'mono' ? 'monospace' : 'sans-serif');
+      span.style.fontSize = Math.max(10, Math.round((l.size || 120) * 0.25)) + 'px';
+      span.style.opacity = (l.opacity === undefined ? 1 : (l.opacity > 1 ? l.opacity / 100 : l.opacity));
+      span.style.pointerEvents = 'none';
+      box.appendChild(span);
+    });
+  }
+  if (!currentSet || !currentSet.design_url || (p.hide_design)) {
+    const oldDesign = document.getElementById('designImg');
+    if (oldDesign) oldDesign.remove();
+    return;
+  }
+  let designImg = document.getElementById('designImg');
+  if (!designImg) {
+    designImg = document.createElement('img');
+    designImg.id = 'designImg';
+    designImg.alt = 'Design';
+    designImg.style.position = 'absolute';
+    designImg.style.pointerEvents = 'none';
+    box.appendChild(designImg);
+  }
+  if (designImg.getAttribute('src') !== currentSet.design_url) designImg.setAttribute('src', currentSet.design_url);
+  const leftPct = ((cx - PRINT_AREA.left) / PRINT_AREA.width) * 100;
+  const topPct = ((cy - PRINT_AREA.top) / PRINT_AREA.height) * 100;
+  const widthPct = (scale / PRINT_AREA.width) * 100;
+  designImg.style.left = leftPct + '%';
+  designImg.style.top = topPct + '%';
+  designImg.style.width = widthPct + '%';
+  designImg.style.height = 'auto';
+  designImg.style.transform = 'translate(-50%, -50%) rotate(' + (pl.angle || 0) + 'deg)';
 }
 function renderArtworkSpec() {
   const box = document.getElementById('artworkSpec');
@@ -1456,7 +1609,7 @@ async function uploadDesign() {
 }
 async function saveMaster() {
   if (!currentSet) return alert('Create a set first.');
-  const placement = { x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value };
+  const placement = clampPlacement({ x: +document.getElementById('x').value, y: +document.getElementById('y').value, scale: +document.getElementById('s').value, angle: +document.getElementById('angle').value });
   const _mr = document.getElementById('masterResult');
   const r = await fetch('/api/sets/' + currentSet.id + '/master', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ placement }) });
   currentSet = await r.json();

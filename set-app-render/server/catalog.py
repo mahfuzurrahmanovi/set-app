@@ -121,3 +121,26 @@ def get_template(product_id):
         if t["product_id"] == product_id:
             return t
     return None
+
+
+def match_template_for_title(title):
+    """Match a store product title to a Printify flat-photo template.
+
+    Only the 3 verified templates exist, so only these map:
+    - "v-neck" / "v neck" -> Bella+Canvas V-Neck (blueprint 48)
+    - "long sleeve" -> Gildan Ultra Cotton Long Sleeve (blueprint 80;
+      the American Apparel long sleeve, blueprint 945, is also a long
+      sleeve, but Gildan 80 is the generic first match and is used so
+      the mapping is deterministic)
+    Everything else (short sleeve, hoodie, crewneck, mug, hat, kids,
+    etc.) returns None: no template exists, so no Printify URL is
+    invented for it and the bare store photo must be used instead.
+    """
+    if not title:
+        return None
+    t = str(title).lower()
+    if "v-neck" in t or "v neck" in t:
+        return get_template("catalog:printify-48")
+    if "long sleeve" in t:
+        return get_template("catalog:printify-80")
+    return None

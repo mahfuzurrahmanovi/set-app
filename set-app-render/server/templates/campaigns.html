@@ -25,6 +25,9 @@
 <div class="card">
   <label>Filter by name, path, tags</label><input id="campaignFilter" placeholder="e.g. golden, mind, warriors" oninput="renderSetList()">
   <label>New campaign name</label><input id="campaignName" placeholder="e.g. Golden State Of">
+  <label>URL path</label>
+  <p><small>URL path: <span id="campaignSlugPreview">fansfit.shop/</span></small></p>
+  <input id="campaignSlug" placeholder="e.g. golden-state-of">
   <button onclick="createCampaign()">Create campaign</button>
   <div class="row">
     <button class="secondary" onclick="bulkCampaign('activate')">Activate</button>
@@ -61,6 +64,7 @@
 <script>
 checkAuth();
 loadSetList();
+bindSlugAuto();
 </script>
 </body>
 </html>

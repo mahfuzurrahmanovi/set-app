@@ -53,7 +53,8 @@
       <img id="centreImg" alt="Product mockup" style="display:none;cursor:pointer" onclick="tapToPlace(event)" onload="positionPlaceBox()">
       <div class="placebox" id="placeBox" style="display:none"></div>
     </div>
-    <p><small>Tap the mockup to move the placement box there, or drag the dashed box itself to place it exactly.</small></p>
+    <p id="mockupSource"><small>Printify flat product photo</small></p>
+    <p><small>The dashed box is the fixed print area. It never moves. Tap inside it or drag the design to move only the design, inside the print area.</small></p>
     <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
     <div id="previewAllResult"></div>
     <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
@@ -102,7 +103,7 @@
 
 <div class="card">
   <h2>Master placement</h2>
-  <p><small>Place once on the first product. Every locked product follows this. The dashed box on the mockup shows this placement.</small></p>
+  <p><small>Place once on the first product. Every locked product follows this. The dashed box is the fixed print area; these sliders move only the design inside it.</small></p>
   <label>Left / right <span id="xVal">0.50</span></label>
   <input type="range" id="x" min="0" max="1" step="0.01" value="0.5" oninput="showVals()">
   <label>Up / down <span id="yVal">0.45</span></label>

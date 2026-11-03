@@ -281,7 +281,8 @@ var _els = {};
 function _el(id) {
   if (!_els[id]) _els[id] = { style: {}, textContent: '', value: '', innerHTML: '', className: '',
     getBoundingClientRect: function() { return { left: 0, top: 0, width: 400, height: 400 }; },
-    naturalWidth: 400, naturalHeight: 400, addEventListener: function() {}, setAttribute: function() {}, getAttribute: function() { return ''; } };
+    naturalWidth: 400, naturalHeight: 400, addEventListener: function() {}, setAttribute: function() {}, getAttribute: function() { return ''; },
+    querySelectorAll: function() { return []; }, appendChild: function() {}, remove: function() {} };
   return _els[id];
 }
 var document = { getElementById: _el, addEventListener: function() {}, querySelectorAll: function() { return []; }, querySelector: function() { return null; } };
@@ -306,12 +307,16 @@ console.log(JSON.stringify({ mx: currentSet.master_placement.x, my: currentSet.m
         _out = json.loads(_proc.stdout.strip().splitlines()[-1])
     except Exception:
         _out = {}
-    check("drag execution: placeAt moves master + sliders + box",
+    # Mockup fix (2026-11-03 22:43): the print area box is FIXED at
+    # 25%/20%/50%/50% and only the design moves, clamped to the box.
+    # placeAt(100, 300) on a 400x400 mockup is x 0.25 (box left edge)
+    # and y 0.75 clamped to the box bottom edge 0.70; the box itself
+    # stays at 25%/20% before and after.
+    check("drag execution: placeAt moves master + sliders, box fixed",
           _proc.returncode == 0 and _out.get("mx") == 0.25 and
-          _out.get("my") == 0.75 and _out.get("xv") == "0.25" and
-          _out.get("yv") == "0.75" and _out.get("left") == "0%" and
-          _out.get("top") == "50%" and
-          _out.get("left") != _out.get("beforeLeft"),
+          _out.get("my") == 0.70 and _out.get("xv") == "0.25" and
+          _out.get("yv") == "0.70" and _out.get("left") == "25%" and
+          _out.get("top") == "20%",
           _proc.stdout[:300] + _proc.stderr[:300])
     _seg = js.split("function centreImageUrl")[1].split(
         "function renderCentreMockup")[0] if "function centreImageUrl" in js else ""

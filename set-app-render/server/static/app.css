@@ -21,8 +21,6 @@
   .chips label { font-weight: 400; margin-top: 0; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; }
   .chips label input { width: auto; margin-right: 6px; }
   /* Gearlaunch-style editor: centre mockup + right products panel. */
-  .topbar { position: sticky; top: 0; z-index: 5; }
-  .topbar .row button { margin-top: 0; }
   .editor { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; align-items: start; }
   @media (max-width: 900px) { .editor { grid-template-columns: 1fr; } }
   .tabs { display: flex; gap: 8px; margin-top: 8px; }
@@ -30,7 +28,8 @@
   .tabs button.active { outline: 3px solid #0f766e; }
   .mockupWrap { position: relative; margin-top: 12px; background: #eee; border-radius: 12px; min-height: 200px; }
   .mockupWrap img { width: 100%; border-radius: 12px; display: block; }
-  .placebox { position: absolute; border: 2px dashed #dc2626; border-radius: 4px; pointer-events: none; box-sizing: border-box; }
+  .placebox { position: absolute; border: 2px dashed #dc2626; border-radius: 4px; pointer-events: auto; cursor: grab; touch-action: none; box-sizing: border-box; }
+  .placebox:active { cursor: grabbing; }
   .prodcard { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
   .prodcard.selected { outline: 3px solid #0f766e; }
   .prodcard .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #eee; }

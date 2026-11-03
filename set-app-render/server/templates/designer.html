@@ -41,23 +41,6 @@
 </div>
 
 
-<div class="card topbar">
-  <h2 id="topSetName">No set open</h2>
-  <p id="draftLine"><small>Open a set to start.</small></p>
-  <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
-  <div class="row">
-    <button class="secondary" onclick="saveAll()">Save</button>
-    <button onclick="publishLive()">Publish to Shopify (live)</button>
-  </div>
-  <div class="row">
-    <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
-    <button class="secondary" onclick="doLogout()">Log out</button>
-  </div>
-  <div id="publishStatus"></div>
-  <p><small>Save stores everything: placement, details, colours, sizes and prices. Publish goes LIVE immediately, with no draft review step. Preview above first. Ovi fulfils orders manually.</small></p>
-</div>
-
-
 <div class="editor">
   <div class="card">
     <h2>Design</h2>
@@ -70,7 +53,7 @@
       <img id="centreImg" alt="Product mockup" style="display:none;cursor:pointer" onclick="tapToPlace(event)" onload="positionPlaceBox()">
       <div class="placebox" id="placeBox" style="display:none"></div>
     </div>
-    <p><small>Tap the mockup to move the placement box there.</small></p>
+    <p><small>Tap the mockup to move the placement box there, or drag the dashed box itself to place it exactly.</small></p>
     <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
     <div id="previewAllResult"></div>
     <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
@@ -164,8 +147,13 @@
 <div class="card">
   <h2>Variants and publish</h2>
   <div id="variantCount"><small>Open a set to see variant counts.</small></div>
+  <p id="draftLine"><small>Open a set to start.</small></p>
+  <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
+  <div id="publishStatus"></div>
   <label>Grouping</label><div class="row"><button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button><button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button></div><button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
+  <button class="secondary" onclick="saveAll()">Save</button>
   <button onclick="publishLive()">Publish to Shopify (live)</button>
+  <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
   <div id="publishResult"></div>
   <p><small>Publish goes LIVE immediately, with no draft review step. Preview above first. Ovi fulfils orders manually. Profit is not shown or checked here: Shopify already has profit.</small></p>
 </div>

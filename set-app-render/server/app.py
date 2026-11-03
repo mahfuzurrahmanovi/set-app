@@ -1575,15 +1575,16 @@ def _delete_file_if_orphan(sets, url):
 @app.route("/api/sets/<sid>/duplicate", methods=["POST"])
 def duplicate_set(sid):
     """Duplicate a set: new id, " (copy)" name, draft state, artwork
-    unlocked. Design URL is shared; text layers are copied with new
-    ids and their PNG files copied to the new set's names."""
+    unlocked. Bulk-clone rule (Ovi, 2026-11-03): a clone starts with
+    NO design, so a new design never stacks on the old printed one.
+    Products, colours, sizes, prices, placement and campaign settings
+    are kept; design, text layers and rendered mockups are blanked."""
     sets = load_sets()
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
     import copy
     new_set = copy.deepcopy(sets[sid])
     new_sid = uuid.uuid4().hex[:12]
-    old_sid = sid
     new_set["id"] = new_sid
     new_set["name"] = (new_set.get("name") or "Untitled set") + " (copy)"
     new_set["publish_state"] = "draft"
@@ -1599,22 +1600,23 @@ def duplicate_set(sid):
     # are copied as-is.
     new_set["campaign"] = campaign_of(new_set)
     new_set["campaign"]["status"] = "draft"
-    layer_id_map = {}
-    for layer in new_set.get("text_layers") or []:
-        new_lid = uuid.uuid4().hex[:8]
-        layer_id_map[layer["id"]] = new_lid
-        old_path = layer_png_path(old_sid, layer["id"])
-        new_path = layer_png_path(new_sid, new_lid)
-        if os.path.exists(old_path):
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
-            try:
-                shutil.copyfile(old_path, new_path)
-            except OSError:
-                pass
-        layer["id"] = new_lid
+    # Blank-clone: no design, no layers, no rendered mockups. The
+    # original set is untouched (deepcopy was already made); no layer
+    # PNG files are copied, so nothing old can render on the clone.
+    new_set["design_url"] = None
+    new_set["design_width"] = None
+    new_set["design_height"] = None
+    new_set["design_dpi"] = None
+    new_set["design_warnings"] = []
+    new_set["design_version"] = 1
+    new_set["text_layers"] = []
     for p in new_set.get("products", []):
-        hidden = p.get("hidden_layers") or []
-        p["hidden_layers"] = [layer_id_map.get(x, x) for x in hidden]
+        p["mockups"] = []
+        p["mockup_versions"] = {}
+        p["mockup_version"] = None
+        p["hidden_layers"] = []
+        if (p.get("hero_image") or "").startswith("/static/mockups/"):
+            p["hero_image"] = None
     sets[new_sid] = new_set
     save_sets(sets)
     return jsonify(new_set), 201

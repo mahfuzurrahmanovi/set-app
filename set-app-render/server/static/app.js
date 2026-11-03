@@ -852,17 +852,73 @@ async function previewAllMockups() {
   renderCentreMockup();
   box.innerHTML = '<p><small class="ok">' + ok + ' mockup(s) ready</small>' + (fail ? ' <span class="warn">' + fail + ' failed, see each product card</span>' : '') + '</p>';
 }
-function tapToPlace(ev) {
+let lastTouchAt = 0;
+let centreDrag = null;
+function placeAt(clientX, clientY) {
   if (!currentSet) return;
   const img = document.getElementById('centreImg');
+  if (!img) return;
   const rect = img.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
-  const x = (ev.clientX - rect.left) / rect.width;
-  const y = (ev.clientY - rect.top) / rect.height;
+  const x = (clientX - rect.left) / rect.width;
+  const y = (clientY - rect.top) / rect.height;
   document.getElementById('x').value = Math.min(1, Math.max(0, x)).toFixed(2);
   document.getElementById('y').value = Math.min(1, Math.max(0, y)).toFixed(2);
+  // Review fix: positionPlaceBox() reads the SAVED master placement,
+  // so without this the dragged box snapped back to its old spot on
+  // every move. Update the live master placement too, so the box
+  // follows the pointer; Save still persists it.
+  if (currentSet) {
+    currentSet.master_placement = currentSet.master_placement || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
+    currentSet.master_placement.x = Math.min(1, Math.max(0, x));
+    currentSet.master_placement.y = Math.min(1, Math.max(0, y));
+  }
   showVals();
   markDirty();
+}
+function tapToPlace(ev) {
+  // A tap already handled as a touch must not fire twice as a click.
+  if (Date.now() - lastTouchAt < 500) return;
+  placeAt(ev.clientX, ev.clientY);
+}
+function bindCentreDrag() {
+  const img = document.getElementById('centreImg');
+  const box = document.getElementById('placeBox');
+  if (!img || img._dragBound) return;
+  img._dragBound = true;
+  // Touch tap: place at the touch point, and suppress the click
+  // that browsers fire after touchend.
+  img.addEventListener('touchend', function(ev) {
+    if (!ev.changedTouches || !ev.changedTouches.length) return;
+    ev.preventDefault();
+    lastTouchAt = Date.now();
+    placeAt(ev.changedTouches[0].clientX, ev.changedTouches[0].clientY);
+  }, { passive: false });
+  img.addEventListener('touchstart', function() {
+    lastTouchAt = Date.now();
+  }, { passive: true });
+  // Drag the dashed placement box itself, by touch or mouse. The
+  // drag writes into the same master sliders that Save persists,
+  // so dragging and the sliders always agree.
+  if (box) {
+    box.addEventListener('pointerdown', function(ev) {
+      centreDrag = { moved: false, startX: ev.clientX, startY: ev.clientY };
+      if (box.setPointerCapture) { try { box.setPointerCapture(ev.pointerId); } catch (e) {} }
+      ev.preventDefault();
+    });
+    box.addEventListener('pointermove', function(ev) {
+      if (!centreDrag) return;
+      if (Math.abs(ev.clientX - centreDrag.startX) +
+          Math.abs(ev.clientY - centreDrag.startY) > 4) centreDrag.moved = true;
+      if (centreDrag.moved) placeAt(ev.clientX, ev.clientY);
+    });
+    const endDrag = function() {
+      if (centreDrag && centreDrag.moved) lastTouchAt = Date.now();
+      centreDrag = null;
+    };
+    box.addEventListener('pointerup', endDrag);
+    box.addEventListener('pointercancel', endDrag);
+  }
 }
 function aidCenterH() { document.getElementById('x').value = 0.5; showVals(); }
 function aidCenterV() { document.getElementById('y').value = 0.5; showVals(); }
@@ -880,8 +936,13 @@ function setViewSide(side) {
   renderCentreMockup();
 }
 function centreImageUrl(p) {
+  // BARE photo only, never a rendered mockup: a rendered mockup
+  // already has a design printed on it, so using it as the centre
+  // image stacks a new design on top of the old one.
   if (!p) return '';
-  return (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || p._photo || '';
+  const bare = (p.images && p.images[0]) || p.image || p._photoBare || '';
+  if (bare && bare.indexOf('/static/mockups/') === -1) return bare;
+  return '';
 }
 function renderCentreMockup() {
   const img = document.getElementById('centreImg');
@@ -897,6 +958,7 @@ function renderCentreMockup() {
     box.style.display = 'none';
     return;
   }
+  bindCentreDrag();
   if (!url) {
     img.style.display = 'none';
     box.style.display = 'none';
@@ -905,12 +967,12 @@ function renderCentreMockup() {
       p._photoTried = true;
       const pid = p.product_id;
       empty.innerHTML = '<p style="padding:20px"><small>Loading product photo...</small></p>';
-      fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo')
+      fetch('/api/sets/' + currentSet.id + '/products/' + encodeURIComponent(pid) + '/photo?bare=1')
         .then(function(r) { return r.json(); })
         .then(function(j) {
           const sel = selectedProduct();
-          if (j.photo && sel && sel.product_id === pid) {
-            p._photo = j.photo;
+          if (j.photo && j.photo.indexOf('/static/mockups/') === -1 && sel && sel.product_id === pid) {
+            p._photoBare = j.photo;
             renderCentreMockup();
           } else if (sel && sel.product_id === pid) {
             empty.innerHTML = '<p style="padding:20px"><small>No photo on file for ' + esc(p.title || p.product_id) + '. Tap its Preview mockup button once a product photo is available.</small></p>';
@@ -1362,6 +1424,15 @@ async function uploadDesign() {
     currentSet.design_width = j.validation.width;
     currentSet.design_height = j.validation.height;
     currentSet.design_dpi = j.validation.dpi_estimate;
+    // Server clears rendered mockups on upload; clear the client's
+    // copies too, or the centre view keeps showing the old printed
+    // design underneath the new one.
+    (currentSet.products || []).forEach(function(p) {
+      p.mockups = []; p.mockup_versions = {}; p.mockup_version = null;
+      if ((p.hero_image || '').indexOf('/static/mockups/') === 0) p.hero_image = null;
+      delete p._photo; delete p._photoBare; p._photoTried = false;
+    });
+    renderCentreMockup();
     const v = j.validation || {};
     const warns = (v.warnings || []).map(function(w) { return '<br><small>' + esc(w) + '</small>'; }).join('');
     let html = '<p class="ok">Uploaded and checked: transparent PNG, ' + v.width + ' x ' + v.height + ' px, about ' + v.dpi_estimate + ' DPI estimated.' + warns + '</p>';

@@ -347,6 +347,117 @@ def get_product_image(product_id):
     return (node.get("featuredImage") or {}).get("url")
 
 
+def get_product_details(product_id):
+    """Full details for one Shopify product, for enriching a set entry.
+
+    Returns a dict with title, handle, featured image, images (first
+    10), Color/Size option values, per-variant prices {(colour, size):
+    price} and variant count, or None when the product does not exist.
+    Raises RuntimeError when Shopify is not authenticated or the lookup
+    fails. The access token is used in the header only.
+    """
+    pid = re.sub(r"\D", "", str(product_id or ""))
+    if not pid:
+        return None
+    gql = """
+      query ($id: ID!) {
+        product(id: $id) {
+          title
+          handle
+          featuredImage { url }
+          images(first: 10) { edges { node { url } } }
+          options { name values }
+          variants(first: 250) {
+            pageInfo { hasNextPage }
+            edges { node {
+              price
+              selectedOptions { name value }
+            } }
+          }
+        }
+      }
+    """
+    r = requests.post(
+        _api("/graphql.json"),
+        headers=_headers(),
+        json={"query": gql,
+              "variables": {"id": f"gid://shopify/Product/{pid}"}},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Shopify product lookup failed (HTTP {r.status_code})")
+    data = r.json()
+    if data.get("errors"):
+        raise RuntimeError("Shopify product lookup failed")
+    node = (data.get("data") or {}).get("product")
+    if not node:
+        return None
+    colours, sizes = [], []
+    for opt in node.get("options") or []:
+        name = (opt.get("name") or "").strip().lower()
+        values = opt.get("values") or []
+        if name in ("color", "colour"):
+            colours = list(values)
+        elif name == "size":
+            sizes = list(values)
+    variant_prices = {}
+    variant_edges = (node.get("variants") or {}).get("edges", []) or []
+    has_more = ((node.get("variants") or {}).get("pageInfo") or {}
+                ).get("hasNextPage")
+    for edge in variant_edges:
+        vnode = edge.get("node") or {}
+        picked = {}
+        for sel in vnode.get("selectedOptions") or []:
+            picked[(sel.get("name") or "").strip().lower()] = (
+                sel.get("value"))
+        colour = picked.get("color", picked.get("colour"))
+        size = picked.get("size")
+        price = vnode.get("price")
+        if colour is not None and size is not None and price is not None:
+            variant_prices[(colour, size)] = str(price)
+    images = []
+    for edge in (node.get("images") or {}).get("edges", []) or []:
+        url = ((edge.get("node") or {}).get("url"))
+        if url:
+            images.append(url)
+    featured = (node.get("featuredImage") or {}).get("url")
+    return {
+        "product_id": pid,
+        "title": node.get("title", ""),
+        "handle": node.get("handle", ""),
+        "image": featured,
+        "images": images,
+        "colours": colours,
+        "sizes": sizes,
+        "variant_prices": variant_prices,
+        "variants": None if has_more else len(variant_edges),
+    }
+
+
+def create_page(title, body_html):
+    """Create a Shopify Page, UNPUBLISHED (published_at null).
+
+    The page stays hidden until the merchant publishes it in Shopify
+    admin. Returns the created page dict. Raises RuntimeError on
+    failure; the token never appears in errors.
+    """
+    try:
+        r = requests.post(
+            _api("/pages.json"),
+            headers=_headers(),
+            json={"page": {"title": title, "body_html": body_html,
+                           "published_at": None}},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Shopify page create failed ({exc})")
+    if r.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Shopify page create failed (HTTP {r.status_code})")
+    return r.json().get("page", {})
+
+
 def create_draft_product(title, description="", tags=None, options=None,
                          variants=None, images=None):
     """Create a product in DRAFT status only. Never live.

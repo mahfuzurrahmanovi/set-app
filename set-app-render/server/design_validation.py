@@ -129,6 +129,21 @@ def validate_design(stream, filename="", max_bytes=MAX_BYTES):
                 "truly transparent background."
             ),
         }
+    # Transparent fraction: a solid photo with transparent corners
+    # (rounded corners) passes the corner check, so also require a
+    # real share of transparent pixels.
+    hist = alpha.histogram()
+    transparent_px = sum(hist[:250])
+    total_px = w * h
+    if total_px and transparent_px / total_px < 0.03:
+        return {
+            "ok": False,
+            "error": (
+                "This PNG has almost no transparent area, so it looks "
+                "like a solid photo rather than a design. Please upload "
+                "a design saved with a truly transparent background."
+            ),
+        }
     dpi = round(w / PRINT_WIDTH_INCHES)
     warnings = []
     if dpi < DPI_WARN_BELOW:

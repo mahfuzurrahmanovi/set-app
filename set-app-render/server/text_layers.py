@@ -18,10 +18,23 @@ import uuid
 
 from PIL import Image, ImageDraw, ImageFont
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_BUNDLED = os.path.join(_HERE, "fonts")
+
+
+def _font_path(name):
+    """Bundled font first (Render may not ship DejaVu), else system."""
+    bundled = os.path.join(_BUNDLED, name)
+    if os.path.exists(bundled):
+        return bundled
+    system = os.path.join("/usr/share/fonts/truetype/dejavu", name)
+    return system
+
+
 FONTS = {
-    "sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "serif": "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "mono": "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "sans": _font_path("DejaVuSans.ttf"),
+    "serif": _font_path("DejaVuSerif.ttf"),
+    "mono": _font_path("DejaVuSansMono.ttf"),
 }
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -59,6 +72,21 @@ def validate_layer(body):
         return None, "Opacity must be a whole percent."
     if opacity < 0 or opacity > 100:
         return None, "Opacity must be between 0 and 100 percent."
+    x = y = None
+    for key, dest in (("x", "x"), ("y", "y")):
+        raw = body.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            return None, "Layer position must be a number."
+        if val < 0 or val > 1:
+            return None, "Layer position must be between 0 and 1."
+        if key == "x":
+            x = val
+        else:
+            y = val
     if lettercase == "upper":
         content = content.upper()
     elif lettercase == "lower":
@@ -72,6 +100,8 @@ def validate_layer(body):
         "lettercase": lettercase,
         "rotation": rotation,
         "opacity": opacity,
+        "x": x,
+        "y": y,
         "hidden": False,
     }, None
 
@@ -105,14 +135,17 @@ def composite_layers(photo_path, design_path, placement, layer_pngs,
     """Composite design + visible text layers onto a photo.
 
     design_path may be None (product hides the design: photo only).
-    layer_pngs: list of transparent PNG paths, each centred on the
-    placement centre. Output is a JPEG mockup.
+    layer_pngs: list of transparent PNG paths, or (path, x, y) tuples
+    where x/y are fractions of the photo. Plain paths (and tuples with
+    x/y None) fall back to the placement centre, so old layers without
+    a position keep working. Output is a JPEG mockup.
     """
     from mockup import composite  # local import: same server dir
 
     if design_path is None:
         # Product hides the design: start from the bare photo.
-        Image.open(photo_path).convert("RGB").save(
+        from mockup import _capped_photo
+        _capped_photo(photo_path).convert("RGB").save(
             output_path, "JPEG", quality=92)
     else:
         composite(design_path, photo_path, placement, output_path)
@@ -122,9 +155,15 @@ def composite_layers(photo_path, design_path, placement, layer_pngs,
     W, H = img.size
     cx = float(placement["x"]) * W
     cy = float(placement["y"]) * H
-    for path in layer_pngs:
+    for item in layer_pngs:
+        if isinstance(item, (list, tuple)):
+            path, lx, ly = (list(item) + [None, None])[:3]
+        else:
+            path, lx, ly = item, None, None
         layer = Image.open(path).convert("RGBA")
+        px = float(lx) * W if lx is not None else cx
+        py = float(ly) * H if ly is not None else cy
         img.alpha_composite(
-            layer, (int(cx - layer.width / 2), int(cy - layer.height / 2)))
+            layer, (int(px - layer.width / 2), int(py - layer.height / 2)))
     img.convert("RGB").save(output_path, "JPEG", quality=92)
     return output_path

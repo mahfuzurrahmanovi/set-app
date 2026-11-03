@@ -13,9 +13,26 @@ per-product escape hatch.
 
 from PIL import Image
 
+MAX_PHOTO_WIDTH = 3000
+
+
+def _capped_photo(photo_path):
+    """Open a photo, downscaling to MAX_PHOTO_WIDTH if it is wider.
+
+    Huge CDN photos (8000px+) would otherwise blow the render memory
+    budget; mockups do not need full resolution.
+    """
+    photo = Image.open(photo_path).convert("RGBA")
+    if photo.width > MAX_PHOTO_WIDTH:
+        ratio = MAX_PHOTO_WIDTH / photo.width
+        photo = photo.resize(
+            (MAX_PHOTO_WIDTH, max(1, int(photo.height * ratio))),
+            Image.LANCZOS)
+    return photo
+
 
 def composite(design_path, photo_path, placement, output_path):
-    photo = Image.open(photo_path).convert("RGBA")
+    photo = _capped_photo(photo_path)
     design = Image.open(design_path).convert("RGBA")
     W, H = photo.size
     x = float(placement["x"])

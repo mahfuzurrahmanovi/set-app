@@ -8,15 +8,19 @@ No Cat Kiss Fish connection exists in this app by design: Srity runs
 everything here from her phone, Ovi fulfills manually after sales.
 """
 
+import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
+import threading
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 import requests
-from flask import Flask, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 
 import shopify as shopify_api
 from catalog import TEMPLATES, get_template, template_entry
@@ -25,9 +29,20 @@ from mockup import effective_placement, render_set_mockups
 from text_layers import composite_layers, render_text_png, validate_layer
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_FILE = os.path.join(BASE, "data", "sets.json")
-UPLOAD_DIR = os.path.join(BASE, "server", "static", "uploads")
-MOCKUP_DIR = os.path.join(BASE, "server", "static", "mockups")
+
+# Durable storage: SETAPP_DATA_ROOT points at a persistent directory
+# (a Render disk in production). Unset = current behaviour, paths
+# under the project tree. Tests override the DATA_FILE/UPLOAD_DIR/
+# MOCKUP_DIR globals directly, which still works.
+_DATA_ROOT = os.environ.get("SETAPP_DATA_ROOT", "").strip()
+if _DATA_ROOT:
+    DATA_FILE = os.path.join(_DATA_ROOT, "sets.json")
+    UPLOAD_DIR = os.path.join(_DATA_ROOT, "uploads")
+    MOCKUP_DIR = os.path.join(_DATA_ROOT, "mockups")
+else:
+    DATA_FILE = os.path.join(BASE, "data", "sets.json")
+    UPLOAD_DIR = os.path.join(BASE, "server", "static", "uploads")
+    MOCKUP_DIR = os.path.join(BASE, "server", "static", "mockups")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -35,19 +50,133 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 # Single-process server: a per-process random key is fine; set
 # FLASK_SECRET_KEY in the environment for multi-process deployments.
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
+app.config["MAX_CONTENT_LENGTH"] = 26 * 1024 * 1024
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+_public_url = (
+    os.environ.get("APP_PUBLIC_URL")
+    or os.environ.get("RENDER_EXTERNAL_URL", "")
+).strip()
+if _public_url.startswith("https://"):
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+if not os.environ.get("SET_APP_PASSWORD"):
+    print("WARNING: SET_APP_PASSWORD is not set; the app runs open "
+          "(local dev/tests only). Set it in production.")
+
+_WRITE_LOCK = threading.RLock()
+
+
+def get_app_password():
+    """App password, read per request so env changes apply live."""
+    return os.environ.get("SET_APP_PASSWORD", "").strip() or None
+
+
+def _csrf_token():
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(24)
+        session["csrf_token"] = token
+    return token
+
+
+@app.before_request
+def _gate_request():
+    """Write lock + auth + CSRF gate for the API.
+
+    Write lock: every POST /api/* holds one reentrant lock for the
+    whole request, so a read-modify-write cycle cannot lose another
+    request's edit (two users, one single-process server). Released in
+    teardown, even when the gate below answers early.
+    Auth/CSRF: exempt are the CSRF token + auth-status GETs (the UI
+    needs them to decide whether to show the login form), the Shopify
+    OAuth callback (validated by HMAC + state instead), and all
+    non-API pages/assets. POST /api/login and /api/logout need CSRF
+    but not auth (login is how auth is gained). Everything else under
+    /api/ needs auth when a password is configured, and every POST
+    needs a valid CSRF token.
+    """
+    from flask import g
+    if request.method == "POST" and request.path.startswith("/api/"):
+        _WRITE_LOCK.acquire()
+        g._write_locked = True
+    path = request.path
+    if path in ("/api/csrf-token", "/api/auth-status"):
+        return None
+    if path == "/auth/shopify/callback":
+        return None
+    if path == "/auth/shopify":
+        password = get_app_password()
+        if password and not session.get("app_authed"):
+            return jsonify({"error": "Login required."}), 401
+        return None
+    if not path.startswith("/api/"):
+        return None
+    if request.method == "POST":
+        token = request.headers.get("X-CSRF-Token", "")
+        if not token or token != session.get("csrf_token"):
+            return jsonify(
+                {"error": "CSRF token missing or invalid."}), 403
+    if path in ("/api/login", "/api/logout"):
+        return None
+    password = get_app_password()
+    if password and not session.get("app_authed"):
+        return jsonify({"error": "Login required."}), 401
+    return None
+
+
+@app.teardown_request
+def _release_write_lock(exc=None):
+    from flask import g
+    if getattr(g, "_write_locked", False):
+        g._write_locked = False
+        try:
+            _WRITE_LOCK.release()
+        except RuntimeError:
+            pass
+
+
+@app.errorhandler(400)
+@app.errorhandler(404)
+@app.errorhandler(413)
+@app.errorhandler(500)
+def _json_error(err):
+    code = getattr(err, "code", 500)
+    message = "File too large." if code == 413 else (
+        getattr(err, "description", None) or "Request failed.")
+    if code == 500:
+        message = "Something went wrong. Try again."
+    return jsonify({"error": message}), code
 
 
 def load_sets():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE) as f:
-            return json.load(f)
+    with _WRITE_LOCK:
+        for candidate in (DATA_FILE, DATA_FILE + ".bak"):
+            if os.path.exists(candidate):
+                try:
+                    with open(candidate) as f:
+                        data = json.load(f)
+                    if candidate.endswith(".bak"):
+                        print("WARNING: sets.json was corrupt; "
+                              "loaded sets.json.bak instead.")
+                    return data
+                except (OSError, ValueError):
+                    continue
     return {}
 
 
 def save_sets(sets):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w") as f:
-        json.dump(sets, f, indent=2)
+    with _WRITE_LOCK:
+        parent = os.path.dirname(DATA_FILE)
+        os.makedirs(parent, exist_ok=True)
+        if os.path.exists(DATA_FILE):
+            try:
+                shutil.copyfile(DATA_FILE, DATA_FILE + ".bak")
+            except OSError:
+                pass
+        tmp = DATA_FILE + ".tmp." + secrets.token_hex(6)
+        with open(tmp, "w") as f:
+            json.dump(sets, f, indent=2)
+        os.replace(tmp, DATA_FILE)
 
 
 def find_product(set_obj, pid):
@@ -59,6 +188,19 @@ def find_product(set_obj, pid):
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def design_version_of(set_obj):
+    """Version counter for the set's artwork; old sets default to 1."""
+    try:
+        return int(set_obj.get("design_version", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def bump_design_version(set_obj):
+    set_obj["design_version"] = design_version_of(set_obj) + 1
+    return set_obj["design_version"]
 
 
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -74,7 +216,11 @@ def layer_png_url(sid, lid):
 
 
 def visible_layer_pngs(set_obj, product):
-    """Rendered PNG paths for layers visible on this product."""
+    """Rendered PNGs for layers visible on this product.
+
+    Returns (path, x, y) tuples; x/y None means the placement centre
+    (old layers without a position).
+    """
     out = []
     per_product_hidden = set(product.get("hidden_layers") or [])
     for layer in set_obj.get("text_layers", []) or []:
@@ -82,17 +228,29 @@ def visible_layer_pngs(set_obj, product):
             continue
         path = layer_png_path(set_obj["id"], layer["id"])
         if os.path.exists(path):
-            out.append(path)
+            out.append((path, layer.get("x"), layer.get("y")))
     return out
 
 
 def parse_money(value):
     """Float from a price field, or None when blank/invalid."""
+    dec = parse_money_decimal(value)
+    return float(dec) if dec is not None else None
+
+
+def parse_money_decimal(value):
+    """Decimal from a price field, or None when blank/invalid.
+
+    Money compares in Decimal (no binary-float surprises); storage
+    stays float so the sets.json shape does not change.
+    """
     if value is None or value == "":
         return None
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        if isinstance(value, bool):
+            return None
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
         return None
 
 
@@ -144,24 +302,73 @@ def variant_summary(set_obj):
     }
 
 
+def variant_price_for_pair(product, colour, size):
+    """Price for one variant pair, or None when unknown.
+
+    An explicitly set sale_price overrides ALL variants of the product.
+    Otherwise the stored per-variant price (from the Shopify listing)
+    is used when it covers the pair.
+    """
+    sale = parse_money_decimal(product.get("sale_price"))
+    if sale is not None:
+        return sale
+    prices = product.get("variant_prices") or {}
+    raw = prices.get(f"{colour}||{size}")
+    if raw is None:
+        raw = prices.get(f"{colour}|{size}")
+    return parse_money_decimal(raw)
+
+
+def variant_prices_cover(product):
+    """True when every selected pair has a known price."""
+    for colour in product.get("colours") or []:
+        for size in product.get("sizes") or []:
+            if variant_price_for_pair(product, colour, size) is None:
+                return False
+    return True
+
+
 def profit_problems(set_obj):
-    """Products where sale price is below base cost (negative profit)."""
+    """Products where a price is below base cost (negative profit).
+
+    With an explicit sale price the check is sale vs base. With
+    per-variant prices, every pair below base is a problem.
+    """
     problems = []
     for p in set_obj.get("products", []):
-        sale = parse_money(p.get("sale_price"))
-        cost = parse_money(p.get("base_cost"))
-        if sale is not None and cost is not None and sale < cost:
-            problems.append({
-                "product_id": p["product_id"],
-                "title": p.get("title") or p["product_id"],
-                "sale_price": sale,
-                "base_cost": cost,
-            })
+        cost = parse_money_decimal(p.get("base_cost"))
+        if cost is None:
+            continue
+        sale = parse_money_decimal(p.get("sale_price"))
+        if sale is not None:
+            if sale < cost:
+                problems.append({
+                    "product_id": p["product_id"],
+                    "title": p.get("title") or p["product_id"],
+                    "sale_price": float(sale),
+                    "base_cost": float(cost),
+                })
+            continue
+        for colour in p.get("colours") or []:
+            for size in p.get("sizes") or []:
+                price = variant_price_for_pair(p, colour, size)
+                if price is not None and price < cost:
+                    problems.append({
+                        "product_id": p["product_id"],
+                        "title": p.get("title") or p["product_id"],
+                        "sale_price": float(price),
+                        "base_cost": float(cost),
+                        "variant": f"{colour} / {size}",
+                    })
     return problems
 
 
 def incomplete_products(set_obj):
-    """Products missing colours, sizes, or sale price (unpublishable)."""
+    """Products missing colours, sizes, or a usable price.
+
+    A product is publishable on price when it has an explicit sale
+    price OR its per-variant prices cover every selected pair.
+    """
     missing = []
     for p in set_obj.get("products", []):
         reasons = []
@@ -169,7 +376,8 @@ def incomplete_products(set_obj):
             reasons.append("colours")
         if not (p.get("sizes") or []):
             reasons.append("sizes")
-        if parse_money(p.get("sale_price")) is None:
+        if (parse_money_decimal(p.get("sale_price")) is None
+                and not variant_prices_cover(p)):
             reasons.append("sale price")
         if reasons:
             missing.append({
@@ -194,6 +402,8 @@ def build_draft_payloads(set_obj):
     Images are absolute mockup URLs when a public app URL is
     configured; otherwise images are omitted (recorded honestly in
     the publish record) because Shopify cannot fetch relative URLs.
+    Hero rule: the payload image list is [hero] + [other mockups];
+    reorder changes the rest, never the hero slot.
     """
     grouping = set_obj.get("grouping", "combine")
     description = set_obj.get("description", "") or ""
@@ -210,22 +420,28 @@ def build_draft_payloads(set_obj):
         absolute = [absolute_url(u) if u.startswith("/") else u for u in urls]
         return [u for u in absolute if u]
 
+    def variant_row(colour, size, price, compare, style=None):
+        if style is not None:
+            row = {"option1": style, "option2": colour, "option3": size,
+                   "price": format(price, ".2f")}
+        else:
+            row = {"option1": colour, "option2": size,
+                   "price": format(price, ".2f")}
+        if compare is not None:
+            row["compare_at_price"] = format(compare, ".2f")
+        return row
+
     def product_payload(title, product):
         colours = product.get("colours") or []
         sizes = product.get("sizes") or []
-        sale = parse_money(product.get("sale_price"))
-        compare = parse_money(product.get("compare_at_price"))
+        compare = parse_money_decimal(product.get("compare_at_price"))
         variants = []
         for colour in colours:
             for size in sizes:
-                row = {
-                    "option1": colour,
-                    "option2": size,
-                    "price": "%.2f" % sale,
-                }
-                if compare is not None:
-                    row["compare_at_price"] = "%.2f" % compare
-                variants.append(row)
+                price = variant_price_for_pair(product, colour, size)
+                if price is None:
+                    continue
+                variants.append(variant_row(colour, size, price, compare))
         return {
             "title": title,
             "description": description,
@@ -244,9 +460,12 @@ def build_draft_payloads(set_obj):
             title = p.get("title") or p["product_id"]
             payloads.append(product_payload(title, p))
         return payloads
-    # Combine: one listing; variants carry each member's own price.
-    colours, sizes = [], []
+    # Combine: one listing. A Style option keeps each member's variants
+    # distinct even when colours/sizes overlap (tee Black/S and hoodie
+    # Black/S are different variants, not a duplicate Shopify rejects).
+    colours, sizes, styles = [], [], []
     for p in set_obj.get("products", []):
+        styles.append(p.get("title") or p["product_id"])
         for c in p.get("colours") or []:
             if c not in colours:
                 colours.append(c)
@@ -255,18 +474,15 @@ def build_draft_payloads(set_obj):
                 sizes.append(s)
     variants = []
     for p in set_obj.get("products", []):
-        sale = parse_money(p.get("sale_price"))
-        compare = parse_money(p.get("compare_at_price"))
+        style = p.get("title") or p["product_id"]
+        compare = parse_money_decimal(p.get("compare_at_price"))
         for colour in p.get("colours") or []:
             for size in p.get("sizes") or []:
-                row = {
-                    "option1": colour,
-                    "option2": size,
-                    "price": "%.2f" % sale,
-                }
-                if compare is not None:
-                    row["compare_at_price"] = "%.2f" % compare
-                variants.append(row)
+                price = variant_price_for_pair(p, colour, size)
+                if price is None:
+                    continue
+                variants.append(variant_row(colour, size, price, compare,
+                                            style=style))
     images = []
     for p in set_obj.get("products", []):
         for url in product_images(p):
@@ -277,6 +493,7 @@ def build_draft_payloads(set_obj):
         "description": description,
         "tags": tags,
         "options": [
+            {"name": "Style", "values": styles},
             {"name": "Color", "values": colours},
             {"name": "Size", "values": sizes},
         ],
@@ -344,15 +561,61 @@ def shopify_status():
     return jsonify(shopify_api.status())
 
 
+@app.route("/api/csrf-token")
+def csrf_token_route():
+    """Per-session CSRF token. No auth needed for this GET: the UI
+    fetches it on load, then sends it on every POST."""
+    return jsonify({"csrf_token": _csrf_token()})
+
+
+@app.route("/api/auth-status")
+def auth_status():
+    """Login state for the UI. Never includes the password."""
+    password = get_app_password()
+    if password is None:
+        return jsonify({"authenticated": True, "password_configured": False})
+    return jsonify({"authenticated": bool(session.get("app_authed")),
+                    "password_configured": True})
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    """Log in with the app password. In open mode (no password
+    configured) this always succeeds; the UI shows a warning banner
+    instead of a login form."""
+    password = get_app_password()
+    if password is None:
+        session["app_authed"] = True
+        return jsonify({"authenticated": True, "password_configured": False})
+    body = request.get_json(silent=True) or {}
+    given = str(body.get("password") or "")
+    if given and secrets.compare_digest(given, password):
+        session["app_authed"] = True
+        return jsonify({"authenticated": True, "password_configured": True})
+    return jsonify({"error": "Wrong password."}), 401
+
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.pop("app_authed", None)
+    return jsonify({"authenticated": False})
+
+
 @app.route("/api/products/search")
 def search_products():
     """Search Shopify products by title. Returns only id, title,
-    price and image URL per product. Never includes the token."""
+    price and image URL per product. Never includes the token.
+    ?limit= caps results (1-50, default 20)."""
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return jsonify({"products": []})
     try:
-        results = shopify_api.search_products(q)
+        limit = int(request.args.get("limit", 20))
+    except (TypeError, ValueError):
+        limit = 20
+    limit = max(1, min(limit, 50))
+    try:
+        results = shopify_api.search_products(q, limit=limit)
     except RuntimeError as exc:
         msg = str(exc)
         if "not authenticated" in msg:
@@ -366,12 +629,49 @@ def search_products():
                 503,
             )
         return jsonify({"error": "Product search failed. Try again."}), 502
-    return jsonify({"products": results})
+    # Slice defensively: a provider that ignores the limit must not
+    # leak more rows than the caller asked for.
+    return jsonify({"products": (results or [])[:limit]})
+
+
+@app.route("/static/uploads/<name>")
+def serve_upload(name):
+    """Serve an uploaded file from the configured upload dir.
+
+    Needed once storage moves off the Flask static folder (Render
+    disk). Only bare filenames are served; paths are rejected.
+    """
+    if "/" in name or "\\" in name or name.startswith("."):
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(UPLOAD_DIR, name)
+
+
+@app.route("/static/mockups/<name>")
+def serve_mockup(name):
+    """Serve a rendered mockup from the configured mockup dir."""
+    if "/" in name or "\\" in name or name.startswith("."):
+        return jsonify({"error": "not found"}), 404
+    return send_from_directory(MOCKUP_DIR, name)
 
 
 @app.route("/api/sets", methods=["GET"])
 def list_sets():
     return jsonify(list(load_sets().values()))
+
+
+@app.route("/api/sets/<sid>/export", methods=["GET"])
+def export_set(sid):
+    """Download one set as JSON (backup / move between installs)."""
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    data = json.dumps(sets[sid], indent=2)
+    return Response(
+        data,
+        mimetype="application/json",
+        headers={"Content-Disposition":
+                 f"attachment; filename={sid}.json"},
+    )
 
 
 @app.route("/api/sets", methods=["POST"])
@@ -390,6 +690,7 @@ def create_set():
         "publish_error": None,
         "artwork_locked": False,
         "design_url": None,
+        "design_version": 1,
         "text_layers": [],
         "draft_saved_at": None,
         "products": [
@@ -411,13 +712,25 @@ def set_master(sid):
     sets = load_sets()
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
-    sets[sid]["master_placement"] = body.get("placement", sets[sid]["master_placement"])
+    placement, err = _validate_placement(body.get("placement"))
+    if err:
+        return jsonify({"error": err}), 400
+    if placement != sets[sid].get("master_placement"):
+        sets[sid]["master_placement"] = placement
+        bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify(sets[sid])
 
 
 @app.route("/api/sets/<sid>/products", methods=["POST"])
 def add_product(sid):
+    """Add a store product, enriched from Shopify.
+
+    A bare product_id used to create a shell entry (no title, colours,
+    sizes or prices) that could never be configured or published. Now
+    the entry is filled from the live listing; an unknown id, or a
+    catalog id sent here by mistake, is rejected and nothing is added.
+    """
     body = request.get_json(force=True) or {}
     sets = load_sets()
     if sid not in sets:
@@ -427,11 +740,142 @@ def add_product(sid):
     if not pid:
         return jsonify({"error": "product_id is required"}), 400
     products = sets[sid]["products"]
-    if not any(p["product_id"] == pid for p in products):
-        products.append(
-            {"product_id": pid, "locked": True, "override_placement": None}
-        )
-        save_sets(sets)
+    if any(p["product_id"] == pid for p in products):
+        return jsonify(sets[sid])
+    if pid.startswith("catalog:"):
+        return jsonify({
+            "error": "Catalog templates are added from the Catalog "
+                     "products section, not by product ID."
+        }), 400
+    if not shopify_api.authenticated():
+        return jsonify({
+            "error": "Shopify is not connected. "
+                     "Open /auth/shopify and approve the app first."
+        }), 503
+    try:
+        details = shopify_api.get_product_details(pid)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    if details is None:
+        return jsonify({
+            "error": "No Shopify product with that ID was found."
+        }), 400
+    entry = _entry_from_details(details)
+    products.append(entry)
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+def _entry_from_details(details):
+    """A set-product entry filled from a Shopify listing."""
+    colours = list(details.get("colours") or [])
+    sizes = list(details.get("sizes") or [])
+    shop = shopify_api.shop_domain()
+    handle = details.get("handle") or ""
+    url = f"https://{shop}/products/{handle}" if shop and handle else ""
+    prices = {}
+    for key, price in (details.get("variant_prices") or {}).items():
+        # Real listings arrive with (colour, size) tuple keys; accept
+        # string keys too ("Black||S" or "Black / S") so a JSON
+        # round-trip of a details dict can never crash the add.
+        if isinstance(key, (list, tuple)) and len(key) == 2:
+            colour, size = key
+        elif isinstance(key, str) and "||" in key:
+            colour, size = key.split("||", 1)
+        elif isinstance(key, str) and " / " in key:
+            colour, size = key.split(" / ", 1)
+        else:
+            continue
+        prices[f"{colour}||{size}"] = str(price)
+    return {
+        "product_id": details["product_id"],
+        "kind": "store",
+        "title": details.get("title") or details["product_id"],
+        "handle": handle,
+        "url": url,
+        "image": details.get("image"),
+        "images": list(details.get("images") or []),
+        "colours": colours,
+        "all_colours": colours,
+        "sizes": sizes,
+        "all_sizes": sizes,
+        "variant_prices": prices,
+        "variants": details.get("variants"),
+        "default_color": colours[0] if colours else None,
+        "mockups": [],
+        "mockup_versions": {},
+        "hero_image": None,
+        "locked": True,
+        "override_placement": None,
+        "sale_price": None,
+        "compare_at_price": None,
+        "base_cost": None,
+    }
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/refresh", methods=["POST"])
+def refresh_product(sid, pid):
+    """Re-sync one store product from Shopify.
+
+    Updates title/handle/image/images/options/variant prices/count.
+    Never overwrites the seller's selected colours/sizes, sale or
+    compare-at prices, base cost, default colour, lock or placement.
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    if p.get("kind") == "catalog":
+        return jsonify({
+            "error": "Catalog templates have no Shopify listing to "
+                     "refresh from."
+        }), 400
+    if not shopify_api.authenticated():
+        return jsonify({
+            "error": "Shopify is not connected. "
+                     "Open /auth/shopify and approve the app first."
+        }), 503
+    try:
+        details = shopify_api.get_product_details(pid)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    if details is None:
+        return jsonify({
+            "error": "This product no longer exists in Shopify."
+        }), 400
+    fresh = _entry_from_details(details)
+    for key in ("title", "handle", "url", "image", "images",
+                "all_colours", "all_sizes", "variant_prices", "variants"):
+        p[key] = fresh[key]
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/default-color",
+           methods=["POST"])
+def set_default_color(sid, pid):
+    """Set a product's default colour (must be a selected colour).
+
+    The default moves to the front of the colours list, so the first
+    variant of the listing is the default.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    colour = str(body.get("colour") or "").strip()
+    if not colour or colour not in (p.get("colours") or []):
+        return jsonify({
+            "error": "Default colour must be one of the selected colours."
+        }), 400
+    p["default_color"] = colour
+    p["colours"] = [colour] + [c for c in p["colours"] if c != colour]
+    save_sets(sets)
     return jsonify(sets[sid])
 
 
@@ -537,6 +981,207 @@ def save_draft(sid):
     return jsonify(sets[sid])
 
 
+def _validate_placement(raw):
+    """Placement dict or an error string."""
+    if not isinstance(raw, dict):
+        return None, "placement must be an object"
+    try:
+        x = float(raw["x"])
+        y = float(raw["y"])
+        scale = float(raw["scale"])
+        angle = float(raw.get("angle", 0))
+    except (KeyError, TypeError, ValueError):
+        return None, "placement needs numeric x, y, scale"
+    if not (0 <= x <= 1 and 0 <= y <= 1):
+        return None, "placement x and y must be between 0 and 1"
+    if not (0.1 <= scale <= 1):
+        return None, "placement size must be between 0.1 and 1"
+    if not (-180 <= angle <= 180):
+        return None, "placement angle must be between -180 and 180"
+    return {"x": x, "y": y, "scale": scale, "angle": angle}, None
+
+
+@app.route("/api/sets/<sid>/save-all", methods=["POST"])
+def save_all(sid):
+    """Save EVERYTHING the editor holds, in one atomic save.
+
+    The top Save button used to stamp draft_saved_at only, silently
+    dropping slider, details, colour/size and price edits. This
+    endpoint validates everything FIRST (so a bad field saves nothing),
+    then applies placement, details, grouping and every product's
+    colours/sizes/pricing, and stamps draft_saved_at.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    s = sets[sid]
+    placement, placement_err = None, None
+    if "placement" in body and body["placement"] is not None:
+        placement, placement_err = _validate_placement(body["placement"])
+        if placement_err:
+            return jsonify({"error": placement_err}), 400
+    details = body.get("details") or {}
+    if "name" in details:
+        if len(str(details["name"])) > 255:
+            return jsonify({"error": "Title must be 255 characters or fewer."}), 400
+    if "slug" in details:
+        slug = str(details["slug"]).strip()
+        if slug and (len(slug) > 100 or not SLUG_RE.match(slug)):
+            return jsonify({
+                "error": "URL slug may only use lowercase letters, numbers "
+                         "and hyphens, e.g. oregon-ducks-set."
+            }), 400
+    if "grouping" in details and details["grouping"] not in ("combine", "split"):
+        return jsonify({"error": "grouping must be combine or split"}), 400
+    if "grouping" in body and body["grouping"] not in ("combine", "split"):
+        return jsonify({"error": "grouping must be combine or split"}), 400
+    product_updates = {}
+    for entry in body.get("products") or []:
+        pid = str(entry.get("product_id") or "")
+        p = find_product(s, pid)
+        if p is None:
+            return jsonify({"error": f"product {pid} is not in the set"}), 400
+        prices = {}
+        for field in ("sale_price", "compare_at_price", "base_cost"):
+            if field in entry:
+                value = parse_money_decimal(entry[field])
+                if entry[field] not in (None, "") and value is None:
+                    return jsonify({"error": f"{field} must be a number"}), 400
+                prices[field] = value
+        sale = prices.get("sale_price")
+        compare = prices.get("compare_at_price")
+        if sale is not None and compare is not None and compare <= sale:
+            return jsonify({
+                "error": "Compare-at must be higher than the sale price."
+            }), 400
+        product_updates[pid] = {
+            "colours": ([str(c) for c in entry["colours"]]
+                        if "colours" in entry else None),
+            "sizes": ([str(z) for z in entry["sizes"]]
+                      if "sizes" in entry else None),
+            "prices": prices,
+        }
+    if placement is not None and placement != s.get("master_placement"):
+        s["master_placement"] = placement
+        bump_design_version(s)
+    if "name" in details:
+        s["name"] = str(details["name"])
+    if "slug" in details:
+        s["slug"] = str(details["slug"]).strip()
+    if "description" in details:
+        s["description"] = str(details["description"])
+    if "tags" in details:
+        raw_tags = details["tags"]
+        if isinstance(raw_tags, str):
+            s["tags"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        else:
+            s["tags"] = [str(t).strip() for t in raw_tags if str(t).strip()]
+    if "grouping" in details:
+        s["grouping"] = details["grouping"]
+    elif "grouping" in body:
+        s["grouping"] = body["grouping"]
+    for pid, upd in product_updates.items():
+        p = find_product(s, pid)
+        if upd["colours"] is not None:
+            p["colours"] = upd["colours"]
+        if upd["sizes"] is not None:
+            p["sizes"] = upd["sizes"]
+        for field, value in upd["prices"].items():
+            p[field] = float(value) if value is not None else None
+    s["draft_saved_at"] = now_iso()
+    save_sets(sets)
+    return jsonify(s)
+
+
+def _orphan_files_referenced(sets, url):
+    """True when any remaining set still references a file URL."""
+    for s in sets.values():
+        if s.get("design_url") == url:
+            return True
+        for p in s.get("products", []):
+            if url in (p.get("mockups") or []) or p.get("hero_image") == url:
+                return True
+    return False
+
+
+def _delete_file_if_orphan(sets, url):
+    """Delete a /static/uploads|mockups file when no set references it."""
+    if not url or not url.startswith("/static/"):
+        return
+    if _orphan_files_referenced(sets, url):
+        return
+    if "/uploads/" in url:
+        base = UPLOAD_DIR
+    elif "/mockups/" in url:
+        base = MOCKUP_DIR
+    else:
+        return
+    path = os.path.join(base, os.path.basename(url))
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+@app.route("/api/sets/<sid>/duplicate", methods=["POST"])
+def duplicate_set(sid):
+    """Duplicate a set: new id, " (copy)" name, draft state, artwork
+    unlocked. Design URL is shared; text layers are copied with new
+    ids and their PNG files copied to the new set's names."""
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    import copy
+    new_set = copy.deepcopy(sets[sid])
+    new_sid = uuid.uuid4().hex[:12]
+    old_sid = sid
+    new_set["id"] = new_sid
+    new_set["name"] = (new_set.get("name") or "Untitled set") + " (copy)"
+    new_set["publish_state"] = "draft"
+    new_set["publish_error"] = None
+    new_set["artwork_locked"] = False
+    new_set["publish_record"] = None
+    new_set["publish_partial"] = None
+    new_set["draft_saved_at"] = None
+    layer_id_map = {}
+    for layer in new_set.get("text_layers") or []:
+        new_lid = uuid.uuid4().hex[:8]
+        layer_id_map[layer["id"]] = new_lid
+        old_path = layer_png_path(old_sid, layer["id"])
+        new_path = layer_png_path(new_sid, new_lid)
+        if os.path.exists(old_path):
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            try:
+                shutil.copyfile(old_path, new_path)
+            except OSError:
+                pass
+        layer["id"] = new_lid
+    for p in new_set.get("products", []):
+        hidden = p.get("hidden_layers") or []
+        p["hidden_layers"] = [layer_id_map.get(x, x) for x in hidden]
+    sets[new_sid] = new_set
+    save_sets(sets)
+    return jsonify(new_set), 201
+
+
+@app.route("/api/sets/<sid>/delete", methods=["POST"])
+def delete_set(sid):
+    """Delete a set. Orphaned design/layer files are removed only when
+    no remaining set references them."""
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    doomed = sets.pop(sid)
+    save_sets(sets)
+    _delete_file_if_orphan(sets, doomed.get("design_url"))
+    for layer in doomed.get("text_layers") or []:
+        _delete_file_if_orphan(
+            sets, layer_png_url(sid, layer["id"]))
+    return jsonify({"deleted": sid})
+
+
 @app.route("/api/sets/<sid>/catalog-templates", methods=["POST"])
 def add_catalog_templates(sid):
     """Add catalog templates (1 or all 3) as designable set products.
@@ -584,7 +1229,12 @@ def set_product_variants(sid, pid):
 
 @app.route("/api/sets/<sid>/products/<path:pid>/pricing", methods=["POST"])
 def set_product_pricing(sid, pid):
-    """Sale price, compare-at price and base cost for one product."""
+    """Sale price, compare-at price and base cost for one product.
+
+    Compare-at must be higher than the sale price when both are set.
+    Negative profit stays allowed at save (shown as a warning);
+    publish still blocks it.
+    """
     body = request.get_json(force=True) or {}
     sets = load_sets()
     if sid not in sets:
@@ -592,12 +1242,22 @@ def set_product_pricing(sid, pid):
     p = find_product(sets[sid], pid)
     if p is None:
         return jsonify({"error": "product not in set"}), 404
+    values = {}
     for field in ("sale_price", "compare_at_price", "base_cost"):
         if field in body:
-            value = parse_money(body[field])
+            value = parse_money_decimal(body[field])
             if body[field] not in (None, "") and value is None:
                 return jsonify({"error": f"{field} must be a number"}), 400
-            p[field] = value
+            values[field] = value
+    sale = values.get("sale_price", parse_money_decimal(p.get("sale_price")))
+    compare = values.get(
+        "compare_at_price", parse_money_decimal(p.get("compare_at_price")))
+    if sale is not None and compare is not None and compare <= sale:
+        return jsonify({
+            "error": "Compare-at must be higher than the sale price."
+        }), 400
+    for field, value in values.items():
+        p[field] = float(value) if value is not None else None
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -688,7 +1348,10 @@ def remove_design(sid):
 @app.route("/api/sets/<sid>/layers", methods=["POST"])
 def add_text_layer(sid):
     """Add a basic text layer (content, font, size, colour, lettercase,
-    rotation, opacity). Renders its transparent PNG immediately."""
+    rotation, opacity, position). Renders its transparent PNG
+    immediately. Position defaults to the master placement, so text
+    starts at the design spot; old layers without a position fall
+    back to the placement centre at render time."""
     body = request.get_json(force=True) or {}
     sets = load_sets()
     if sid not in sets:
@@ -701,10 +1364,81 @@ def add_text_layer(sid):
     layer, error = validate_layer(body)
     if error:
         return jsonify({"error": error}), 400
+    master = sets[sid].get("master_placement") or {}
+    if layer.get("x") is None:
+        layer["x"] = float(master.get("x", 0.5))
+    if layer.get("y") is None:
+        layer["y"] = float(master.get("y", 0.47))
     render_text_png(layer, layer_png_path(sid, layer["id"]))
     sets[sid].setdefault("text_layers", []).append(layer)
+    bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify({"layer": layer, "set": sets[sid]}), 201
+
+
+@app.route("/api/sets/<sid>/layers/<lid>/edit", methods=["POST"])
+def edit_text_layer(sid, lid):
+    """Edit a text layer (any field incl. position) and re-render
+    its PNG. Position fields omitted keep their current values."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    if sets[sid].get("artwork_locked"):
+        return jsonify({
+            "error": "This set's design is locked after publishing. "
+                     "Duplicate the set to change it."
+        }), 409
+    layer = _find_layer(sets[sid], lid)
+    if layer is None:
+        return jsonify({"error": "layer not found"}), 404
+    merged = dict(layer)
+    for key in ("content", "font", "size", "colour", "lettercase",
+                "rotation", "opacity", "x", "y"):
+        if key in body:
+            merged[key] = body[key]
+    merged["id"] = layer["id"]
+    merged["hidden"] = layer.get("hidden", False)
+    new_layer, error = validate_layer(merged)
+    if error:
+        return jsonify({"error": error}), 400
+    new_layer["id"] = layer["id"]
+    new_layer["hidden"] = layer.get("hidden", False)
+    render_text_png(new_layer, layer_png_path(sid, lid))
+    for i, old in enumerate(sets[sid].get("text_layers", [])):
+        if old["id"] == lid:
+            sets[sid]["text_layers"][i] = new_layer
+            break
+    bump_design_version(sets[sid])
+    save_sets(sets)
+    return jsonify({"layer": new_layer, "set": sets[sid]})
+
+
+@app.route("/api/sets/<sid>/layers/<lid>/move", methods=["POST"])
+def move_text_layer(sid, lid):
+    """Move a text layer up/down in the layer order (swap with the
+    neighbour). Body {dir: -1 | 1}."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    layers = sets[sid].get("text_layers", []) or []
+    idx = next((i for i, l in enumerate(layers) if l["id"] == lid), None)
+    if idx is None:
+        return jsonify({"error": "layer not found"}), 404
+    try:
+        direction = int(body.get("dir", body.get("direction", 0)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "dir must be -1 or 1"}), 400
+    if direction not in (-1, 1):
+        return jsonify({"error": "dir must be -1 or 1"}), 400
+    target = idx + direction
+    if target < 0 or target >= len(layers):
+        return jsonify({"error": "layer is already at that end"}), 400
+    layers[idx], layers[target] = layers[target], layers[idx]
+    bump_design_version(sets[sid])
+    save_sets(sets)
+    return jsonify(sets[sid])
 
 
 @app.route("/api/sets/<sid>/layers/<lid>/hide", methods=["POST"])
@@ -718,6 +1452,7 @@ def hide_text_layer(sid, lid):
     if layer is None:
         return jsonify({"error": "layer not found"}), 404
     layer["hidden"] = bool(body.get("hidden", True))
+    bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -742,6 +1477,7 @@ def delete_text_layer(sid, lid):
     path = layer_png_path(sid, lid)
     if os.path.exists(path):
         os.remove(path)
+    bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -765,6 +1501,7 @@ def hide_layer_on_product(sid, pid, lid):
     else:
         hidden.discard(lid)
     p["hidden_layers"] = sorted(hidden)
+    bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -782,6 +1519,7 @@ def hide_design_on_product(sid, pid):
     if p is None:
         return jsonify({"error": "product not in set"}), 404
     p["hide_design"] = bool(body.get("hidden", True))
+    bump_design_version(sets[sid])
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -794,16 +1532,104 @@ def get_variant_count(sid):
     return jsonify(variant_summary(sets[sid]))
 
 
+def mockup_is_current(set_obj, product):
+    """True when the product's display mockup matches the design version.
+
+    Missing version info counts as stale (old renders predate
+    versioning). A product with no mockups at all is NOT stale here:
+    it simply has no images, which the publish preview warns about
+    but does not block — only stale renders block a real publish.
+    """
+    mockups = product.get("mockups") or []
+    hero = product.get("hero_image")
+    display = hero if hero in mockups else (mockups[0] if mockups else None)
+    if display is None:
+        return True
+    if display.startswith("/static/mockups/"):
+        versions = product.get("mockup_versions") or {}
+        if versions.get(display) == design_version_of(set_obj):
+            return True
+        return product.get("mockup_version") == design_version_of(set_obj)
+    return True
+
+
+def publish_checklist(set_obj, payloads):
+    """Per-product publish readiness, for the dry-run preview."""
+    combine = set_obj.get("grouping", "combine") == "combine"
+    by_title = {}
+    for payload in payloads:
+        by_title[payload["title"]] = payload
+    rows = []
+    for p in set_obj.get("products", []):
+        title = p.get("title") or p["product_id"]
+        payload = by_title.get(title)
+        sale = parse_money_decimal(p.get("sale_price"))
+        prices = []
+        for colour in p.get("colours") or []:
+            for size in p.get("sizes") or []:
+                price = variant_price_for_pair(p, colour, size)
+                if price is not None:
+                    prices.append(price)
+        profit = None
+        min_profit = None
+        base = parse_money_decimal(p.get("base_cost"))
+        if base is not None and prices:
+            profit = f"{float(min(prices)) - float(base):.2f} to " \
+                     f"{float(max(prices)) - float(base):.2f}"
+            min_profit = min(prices) - base
+        if combine:
+            variants = len(p.get("colours") or []) * len(p.get("sizes") or [])
+            image_urls = []
+            if p.get("hero_image"):
+                image_urls.append(p["hero_image"])
+            for url in p.get("mockups") or []:
+                if url not in image_urls:
+                    image_urls.append(url)
+            images = len(image_urls)
+        else:
+            variants = len(payload["variants"]) if payload else 0
+            images = len(payload["images"]) if payload else 0
+        rows.append({
+            "product_id": p["product_id"],
+            "title": title,
+            "design": bool(set_obj.get("design_url")),
+            "mockup_current": mockup_is_current(set_obj, p),
+            "colours": len(p.get("colours") or []),
+            "sizes": len(p.get("sizes") or []),
+            "price": (f"{float(sale):.2f}" if sale is not None
+                      else (f"{float(min(prices)):.2f} to "
+                            f"{float(max(prices)):.2f}" if prices else None)),
+            "price_source": ("sale price" if sale is not None
+                             else ("store prices" if prices else None)),
+            "base_cost": (f"{float(base):.2f}" if base is not None else None),
+            "profit": profit,
+            "variants": variants,
+            "images": images,
+            "ready": bool(set_obj.get("design_url")
+                          and mockup_is_current(set_obj, p)
+                          and p.get("colours") and p.get("sizes")
+                          and (sale is not None or prices)
+                          and base is not None
+                          and (min_profit is None or min_profit >= 0)),
+        })
+    return rows
+
+
 @app.route("/api/sets/<sid>/publish-draft", methods=["POST"])
 def publish_draft(sid):
     """Publish a set to Shopify as DRAFT products only, never live.
 
     Guards, in order: already published; no design uploaded; products
-    missing colours/sizes/price; negative profit; variant-limit guard.
-    Body {"dry_run": true} returns the planned payloads without calling
-    Shopify and without changing publish state. A real publish records
-    publish_state "published_draft" and locks the artwork (design
-    uploads are then rejected until the set is duplicated).
+    missing colours/sizes/price; negative profit; variant-limit guard;
+    stale mockups (real publish only). Body {"dry_run": true} returns
+    the planned payloads plus warnings and a per-product checklist,
+    without calling Shopify and without changing publish state.
+    A real publish records publish_state "published_draft" and locks
+    the artwork (design uploads are then rejected until the set is
+    duplicated). Failures never leave "launching" stuck: the state
+    becomes "failed" with the partial progress saved, and a retry
+    resumes from the first payload that was not created instead of
+    duplicating the ones that already exist.
     """
     body = request.get_json(force=True) or {}
     sets = load_sets()
@@ -837,12 +1663,55 @@ def publish_draft(sid):
     if not summary["guard_ok"]:
         return jsonify({"error": summary["message"]}), 400
     payloads = build_draft_payloads(s)
+    warnings = []
+    if not shopify_api.public_url():
+        warnings.append(
+            "No public app URL is configured, so published drafts will "
+            "have no images. Set APP_PUBLIC_URL and re-publish.")
+    stale = [p.get("title") or p["product_id"]
+             for p in s.get("products", [])
+             if not mockup_is_current(s, p)]
+    if stale:
+        if dry_run:
+            warnings.append(
+                "These products need a fresh Preview first (their "
+                "mockups are older than the current design): "
+                + ", ".join(stale))
+        else:
+            return jsonify({
+                "error": "Some mockups are older than the current design. "
+                         "Tap Preview all mockups, then publish again.",
+                "products": stale,
+            }), 400
     if dry_run:
+        if s.get("grouping", "combine") == "split" \
+                and shopify_api.authenticated():
+            try:
+                for payload in payloads:
+                    hits = shopify_api.search_products(payload["title"])
+                    if any((h.get("title") or "").strip().lower()
+                           == payload["title"].strip().lower()
+                           for h in hits):
+                        warnings.append(
+                            f"A Shopify product called "
+                            f"'{payload['title']}' already exists. "
+                            f"Publishing creates a NEW draft; it does "
+                            f"not update the existing listing.")
+            except RuntimeError:
+                warnings.append(
+                    "Could not check for existing titles (Shopify "
+                    "search failed); publishing still creates new drafts.")
+        elif s.get("grouping", "combine") == "split":
+            warnings.append(
+                "Shopify is not connected, so the existing-title check "
+                "was skipped; publishing creates new drafts.")
         return jsonify({
             "dry_run": True,
             "grouping": s.get("grouping", "combine"),
             "variant_summary": summary,
             "products": payloads,
+            "warnings": warnings,
+            "checklist": publish_checklist(s, payloads),
             "note": "Nothing was created in Shopify. This is a preview only.",
         })
     if not shopify_api.authenticated():
@@ -850,31 +1719,61 @@ def publish_draft(sid):
             "error": "Shopify is not connected. "
                      "Open /auth/shopify and approve the app first."
         }), 503
+    partial = s.get("publish_partial") or {}
+    if s.get("publish_state") in ("failed", "launching") and partial:
+        created = list(partial.get("created") or [])
+        start_index = int(partial.get("next_index") or 0)
+    else:
+        created = []
+        start_index = 0
     s["publish_state"] = "launching"
+    s["publish_error"] = None
     save_sets(sets)
-    created = []
     try:
-        for payload in payloads:
-            created.append(shopify_api.create_draft_product(
+        for index in range(start_index, len(payloads)):
+            payload = payloads[index]
+            made = shopify_api.create_draft_product(
                 title=payload["title"],
                 description=payload["description"],
                 tags=payload["tags"],
                 options=payload["options"],
                 variants=payload["variants"],
                 images=payload["images"],
-            ))
-    except RuntimeError as exc:
+            )
+            status = (made or {}).get("status")
+            if status != "draft":
+                raise RuntimeError(
+                    "Shopify returned product "
+                    f"{(made or {}).get('id')} with status "
+                    f"'{status}' instead of draft. It was NOT counted "
+                    f"as published; check it in Shopify admin, delete "
+                    f"it if needed, then publish again.")
+            created.append({
+                "index": index,
+                "title": payload["title"],
+                "shopify_id": (made or {}).get("id"),
+                "handle": (made or {}).get("handle"),
+            })
+            s["publish_partial"] = {"created": created,
+                                    "next_index": index + 1}
+            save_sets(sets)
+    except Exception as exc:
         s["publish_state"] = "failed"
         s["publish_error"] = str(exc)
+        s["publish_partial"] = {"created": created,
+                                "next_index": len(created)}
         save_sets(sets)
         return jsonify({"error": str(exc)}), 502
     s["publish_state"] = "published_draft"
     s["publish_error"] = None
     s["artwork_locked"] = True
+    s["publish_partial"] = None
     s["publish_record"] = {
         "mode": s.get("grouping", "combine"),
-        "shopify_ids": [c.get("id") for c in created],
+        "products": created,
+        "shopify_ids": [c.get("shopify_id") for c in created],
         "images_included": bool(payloads and payloads[0].get("images")),
+        "warnings": warnings,
     }
     save_sets(sets)
     return jsonify({
@@ -884,12 +1783,70 @@ def publish_draft(sid):
     })
 
 
+@app.route("/api/sets/<sid>/create-page", methods=["POST"])
+def create_set_page(sid):
+    """Create a HIDDEN Shopify Page for a published set.
+
+    Title = set name, body = description + one linked block per
+    created draft (title link + image). published_at is null, so the
+    page stays hidden until Ovi publishes it in Shopify admin. The
+    app never publishes the page live. A second create is rejected:
+    the page already exists (its id is in the publish record).
+    """
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    s = sets[sid]
+    if s.get("publish_state") != "published_draft":
+        return jsonify({
+            "error": "Publish the set as a draft first, then create "
+                     "its page."
+        }), 400
+    record = s.get("publish_record") or {}
+    if record.get("page_id"):
+        return jsonify({
+            "error": "This set already has a page "
+                     f"(page id {record['page_id']})."
+        }), 409
+    if not shopify_api.authenticated():
+        return jsonify({
+            "error": "Shopify is not connected. "
+                     "Open /auth/shopify and approve the app first."
+        }), 503
+    shop = shopify_api.shop_domain()
+    blocks = []
+    for item in record.get("products") or []:
+        title = item.get("title") or ""
+        handle = item.get("handle") or ""
+        link = f"https://{shop}/products/{handle}" if handle else ""
+        if link:
+            blocks.append(f'<p><a href="{link}">{title}</a></p>')
+        else:
+            blocks.append(f"<p>{title}</p>")
+    body_html = (s.get("description") or "") + "\n" + "\n".join(blocks)
+    try:
+        page = shopify_api.create_page(s.get("name") or "Untitled set",
+                                       body_html)
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 502
+    record["page_id"] = page.get("id")
+    s["publish_record"] = record
+    save_sets(sets)
+    return jsonify({"page_id": page.get("id"),
+                    "published": False,
+                    "note": "Hidden until you publish it in Shopify admin."})
+
+
 @app.route("/api/sets/<sid>/upload", methods=["POST"])
 def upload_design(sid):
     """Upload + validate a design. Rejects non-transparent files.
 
     After a real draft publish the artwork is locked and uploads
-    return 409 (duplicate the set to change the design).
+    return 409 (duplicate the set to change the design). A new design
+    makes every rendered mockup stale, so all mockup lists and
+    mockup-URL heroes are cleared (files are deleted only when no
+    other set references them) and the design version is bumped.
+    The response never includes a server filesystem path.
     """
     sets = load_sets()
     if sid not in sets:
@@ -911,25 +1868,45 @@ def upload_design(sid):
     f.stream.seek(0)
     f.save(path)
     url = "/static/uploads/" + os.path.basename(path)
+    old_url = sets[sid].get("design_url")
     sets[sid]["design_url"] = url
     # Artwork spec line data for the editor (dimensions + est. DPI).
     sets[sid]["design_width"] = result.get("width")
     sets[sid]["design_height"] = result.get("height")
     sets[sid]["design_dpi"] = result.get("dpi_estimate")
     sets[sid]["design_warnings"] = result.get("warnings", [])
+    old_mockups = []
+    for p in sets[sid].get("products", []):
+        old_mockups.extend(p.get("mockups") or [])
+        if (p.get("hero_image") or "").startswith("/static/mockups/"):
+            old_mockups.append(p["hero_image"])
+    for p in sets[sid].get("products", []):
+        p["mockups"] = []
+        p["mockup_versions"] = {}
+        p["mockup_version"] = None
+        if (p.get("hero_image") or "").startswith("/static/mockups/"):
+            p["hero_image"] = None
+    bump_design_version(sets[sid])
     save_sets(sets)
-    return jsonify({"path": path, "url": url, "validation": result})
+    if old_url and old_url != url:
+        _delete_file_if_orphan(sets, old_url)
+    for old_mockup in set(old_mockups):
+        _delete_file_if_orphan(sets, old_mockup)
+    return jsonify({"url": url, "validation": result})
 
 
 @app.route("/api/sets/<sid>/products/<path:pid>/photo", methods=["GET"])
 def product_photo(sid, pid):
-    """Bare product photo URL for the centre mockup.
+    """Product photo URL for the centre mockup.
 
-    Priority: the product's own stored mockups/hero/images, then
-    catalog template images, then the Shopify featured image via the
-    stored token. Never mutates sets.json. No photo (no token, failed
-    lookup, or none on file) returns photo null with an honest error
-    instead of an invented image.
+    Default priority: the product's own stored mockups/hero/images,
+    then catalog template images, then the Shopify featured image via
+    the stored token. With ?bare=1 the priority is the BARE photo
+    only (stored image/images[0], catalog image, Shopify featured) —
+    never a rendered mockup — so rendering never composites
+    design-on-design. Never mutates sets.json. No photo (no token,
+    failed lookup, or none on file) returns photo null with an honest
+    error instead of an invented image.
     """
     sets = load_sets()
     if sid not in sets:
@@ -937,11 +1914,13 @@ def product_photo(sid, pid):
     p = find_product(sets[sid], pid)
     if p is None:
         return jsonify({"error": "product not in set"}), 404
-    for url in (p.get("mockups") or []):
-        if url:
-            return jsonify({"photo": url, "source": "mockup"})
-    if p.get("hero_image"):
-        return jsonify({"photo": p["hero_image"], "source": "hero"})
+    bare = request.args.get("bare") == "1"
+    if not bare:
+        for url in (p.get("mockups") or []):
+            if url:
+                return jsonify({"photo": url, "source": "mockup"})
+        if p.get("hero_image"):
+            return jsonify({"photo": p["hero_image"], "source": "hero"})
     for url in (p.get("images") or []):
         if url:
             return jsonify({"photo": url, "source": "product"})
@@ -965,72 +1944,218 @@ def product_photo(sid, pid):
                     "error": "no photo on file for this product"}), 200
 
 
+def bare_photo_for_product(set_obj, product):
+    """Bare (unrendered) photo URL for a product, or None.
+
+    Order: stored image/images[0], catalog image, Shopify featured.
+    Rendered mockups are never returned here.
+    """
+    for url in (product.get("images") or []):
+        if url:
+            return url
+    if product.get("image"):
+        return product["image"]
+    template = get_template(product["product_id"])
+    if template and template.get("images"):
+        return template["images"][0]
+    if product.get("kind") == "catalog":
+        return None
+    try:
+        return shopify_api.get_product_image(product["product_id"])
+    except Exception:
+        return None
+
+
+MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024
+
+
+def download_image(url, dest):
+    """Download an https image URL to dest, with guards.
+
+    https only, content-type must start with image/, at most
+    MAX_DOWNLOAD_BYTES (checked on Content-Length first, then while
+    streaming). Raises ValueError/RuntimeError on any violation.
+    """
+    if not url.startswith("https://"):
+        raise ValueError("only https image URLs can be downloaded")
+    r = requests.get(url, timeout=30, stream=True)
+    try:
+        r.raise_for_status()
+        ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip()
+        if not ctype.startswith("image/"):
+            raise ValueError("URL did not return an image")
+        declared = r.headers.get("Content-Length")
+        if declared is not None:
+            try:
+                if int(declared) > MAX_DOWNLOAD_BYTES:
+                    raise ValueError("image is over the 25 MB limit")
+            except ValueError as exc:
+                if "over the 25 MB" in str(exc):
+                    raise
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        total = 0
+        with open(dest, "wb") as fh:
+            for chunk in r.iter_content(65536):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_DOWNLOAD_BYTES:
+                    fh.close()
+                    os.remove(dest)
+                    raise ValueError("image is over the 25 MB limit")
+                fh.write(chunk)
+    finally:
+        r.close()
+    return dest
+
+
+def _mockup_hash(design_path, placement, layer_items):
+    """Short hash of everything a render depends on, so the filename
+    is unique per input: re-rendering identical inputs reuses the
+    file, changed inputs get a new file."""
+    h = hashlib.sha256()
+    if design_path and os.path.exists(design_path):
+        with open(design_path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+    else:
+        h.update(b"nodesign")
+    h.update(json.dumps(placement, sort_keys=True).encode("utf-8"))
+    for item in layer_items:
+        path = item[0] if isinstance(item, (list, tuple)) else item
+        if path and os.path.exists(path):
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+        h.update(str(item).encode("utf-8"))
+    return h.hexdigest()[:10]
+
+
 @app.route("/api/sets/<sid>/mockups", methods=["POST"])
 def make_mockups(sid):
     """Body: {design: path, photos: {product_id: photo_path}}.
 
     A missing or empty design renders the bare product photo (plus any
     visible text layers) instead of failing, so Preview mockup works
-    before a design is uploaded.
-
-    Renders each product with its effective placement (master or
-    override), skipping the design for products that hide it, and
-    compositing each product's visible text layers on top. Paths may
-    be local files, /static/... URLs (resolved to the server static
-    dir), or http(s) URLs (downloaded first, e.g. catalog images).
-    Rendered mockup URLs are stored on the product entries so the hero
-    picker and the draft publish can use them.
+    before a design is uploaded. Each product renders with its
+    effective placement (master or override), skipping the design for
+    products that hide it, and compositing each product's visible text
+    layers on top. A photo that is itself a rendered mockup
+    (/static/mockups/…) is replaced with that product's bare photo,
+    so design is never composited on design. Rendered filenames are
+    unique per input and APPENDED (cap 6 per product, oldest files
+    deleted only when no set references them). Rendered URLs are
+    stamped with the set's current design version. Per-product
+    failures are reported in "errors" while other products still
+    render; nothing is saved for a product that failed.
     """
     body = request.get_json(force=True) or {}
     sets = load_sets()
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
+    set_obj = sets[sid]
 
-    def resolve(path):
+    def static_local(path):
+        """Map a server-issued /static/ URL to its configured dir."""
+        name = os.path.basename(path)
+        if "/uploads/" in path:
+            return os.path.join(UPLOAD_DIR, name)
+        if "/mockups/" in path:
+            return os.path.join(MOCKUP_DIR, name)
+        return None
+
+    def resolve(path, product=None):
+        """Resolve a render input to a local file.
+
+        Allowed: /static/… URLs the server itself issued, or https
+        image URLs (downloaded with guards). A rendered mockup given
+        as a product's photo is replaced with the bare photo. Client
+        filesystem paths are rejected.
+        """
         if not path:
-            return path
+            return None
+        if path.startswith("/static/mockups/") and product is not None:
+            bare = bare_photo_for_product(set_obj, product)
+            if bare is None:
+                raise ValueError("no bare photo for this product")
+            return resolve(bare, product)
         if path.startswith("/static/"):
-            return os.path.join(BASE, "server", path.lstrip("/"))
-        if path.startswith("http://") or path.startswith("https://"):
-            import hashlib
+            local = static_local(path)
+            if local is None or not os.path.exists(local):
+                raise ValueError("photo not found on the server")
+            return local
+        if path.startswith("https://"):
             name = hashlib.md5(path.encode("utf-8")).hexdigest() + ".jpg"
             local = os.path.join(UPLOAD_DIR, "_photo_" + name)
             if not os.path.exists(local):
-                os.makedirs(UPLOAD_DIR, exist_ok=True)
-                r = requests.get(path, timeout=30)
-                r.raise_for_status()
-                with open(local, "wb") as fh:
-                    fh.write(r.content)
+                download_image(path, local)
             return local
-        return path
+        raise ValueError("photo must be a server /static/ URL or https URL")
 
     try:
-        design_path = resolve(body.get("design") or None)
-        photos = {pid: resolve(p) for pid, p in body.get("photos", {}).items()}
-    except Exception:
-        return jsonify({"error": "Could not load a design or product photo."}), 400
+        design_arg = body.get("design") or None
+        design_path = None
+        if design_arg:
+            if design_arg.startswith("/static/"):
+                design_path = static_local(design_arg)
+                if design_path is None or not os.path.exists(design_path):
+                    return jsonify(
+                        {"error": "design not found on the server"}), 400
+            else:
+                return jsonify(
+                    {"error": "design must be a server /static/ URL"}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     os.makedirs(MOCKUP_DIR, exist_ok=True)
     urls = {}
-    for p in sets[sid]["products"]:
+    errors = {}
+    for p in set_obj["products"]:
         pid = p["product_id"]
-        photo = photos.get(pid)
-        if not photo:
+        photo_arg = (body.get("photos") or {}).get(pid)
+        if not photo_arg:
             continue
-        out = os.path.join(MOCKUP_DIR, f"{sid}_{pid}.jpg")
-        design = None if p.get("hide_design") else design_path
-        composite_layers(
-            photo, design, effective_placement(sets[sid], pid),
-            visible_layer_pngs(sets[sid], p), out,
-        )
-        urls[pid] = "/static/mockups/" + os.path.basename(out)
+        try:
+            photo = resolve(photo_arg, product=p)
+            placement = effective_placement(set_obj, pid)
+            layers = visible_layer_pngs(set_obj, p)
+            digest = _mockup_hash(
+                None if p.get("hide_design") else design_path,
+                placement, layers)
+            out = os.path.join(MOCKUP_DIR, f"{sid}_{pid}_{digest}.jpg")
+            design = None if p.get("hide_design") else design_path
+            composite_layers(photo, design, placement, layers, out)
+            url = "/static/mockups/" + os.path.basename(out)
+            urls[pid] = url
+        except Exception as exc:
+            errors[pid] = str(exc)
     for pid, url in urls.items():
-        p = find_product(sets[sid], pid)
-        if p is not None:
-            p["mockups"] = [url]
-            if not p.get("hero_image"):
-                p["hero_image"] = url
+        p = find_product(set_obj, pid)
+        if p is None:
+            continue
+        mockups = [u for u in (p.get("mockups") or []) if u != url]
+        mockups.append(url)
+        while len(mockups) > 6:
+            oldest = mockups.pop(0)
+            keep = False
+            for s in sets.values():
+                for other in s.get("products", []):
+                    if oldest in (other.get("mockups") or []) \
+                            or other.get("hero_image") == oldest:
+                        keep = True
+            if not keep:
+                _delete_file_if_orphan(sets, oldest)
+        p["mockups"] = mockups
+        versions = dict(p.get("mockup_versions") or {})
+        versions[url] = design_version_of(set_obj)
+        p["mockup_versions"] = versions
+        p["mockup_version"] = design_version_of(set_obj)
+        if not p.get("hero_image"):
+            p["hero_image"] = url
     save_sets(sets)
-    return jsonify({"mockups": urls})
+    result = {"mockups": urls}
+    if errors:
+        result["errors"] = errors
+    return jsonify(result)
 
 
 @app.route("/api/catalog/templates", methods=["GET"])

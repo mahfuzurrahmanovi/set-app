@@ -743,7 +743,83 @@ def main():
     check("editor JS passes node --check", proc.returncode == 0,
           proc.stderr[:300])
 
-    # ---- 13. Logout ----
+    # ---- 13. Non-rectangular variant grids (live-verification find) ----
+    print("== 13. Non-rectangular grids ==")
+    path = os.path.join(TMP, "sets.json")
+    with open(path) as f:
+        sets = json.load(f)
+    sets["fix3-set4"] = {
+        "id": "fix3-set4", "name": "Fix3 Set4", "description": "",
+        "tags": [], "slug": "", "grouping": "split",
+        "publish_state": "draft", "publish_error": None,
+        "artwork_locked": False, "design_url": None,
+        "design_version": 1,
+        "master_placement": {"x": 0.5, "y": 0.47,
+                             "scale": 0.32, "angle": 0},
+        "products": [
+            {"product_id": "333", "title": "Grid Tee", "locked": True,
+             "colours": ["Black", "White", "Red"],
+             "sizes": ["S", "M"],
+             "all_colours": ["Black", "White", "Red"],
+             "all_sizes": ["S", "M"],
+             "variant_prices": {"Black||S": "18.88", "Black||M": "20.00",
+                                "White||S": "28.88", "Red||M": "30.00"},
+             "variants": 4, "base_cost": "10", "mockups": []},
+        ],
+        "text_layers": [],
+    }
+    sets["fix3-set5"] = {
+        "id": "fix3-set5", "name": "Fix3 Set5", "description": "",
+        "tags": [], "slug": "", "grouping": "split",
+        "publish_state": "draft", "publish_error": None,
+        "artwork_locked": False, "design_url": None,
+        "design_version": 1,
+        "master_placement": {"x": 0.5, "y": 0.47,
+                             "scale": 0.32, "angle": 0},
+        "products": [
+            {"product_id": "444", "title": "Priceless", "locked": True,
+             "colours": ["Black"], "sizes": ["S"],
+             "all_colours": ["Black"], "all_sizes": ["S"],
+             "variant_prices": {}, "variants": 0, "mockups": []},
+        ],
+        "text_layers": [],
+    }
+    with open(path, "w") as f:
+        json.dump(sets, f)
+    for sid_x in ("fix3-set4", "fix3-set5"):
+        with open(good, "rb") as f:
+            client.post(f"/api/sets/{sid_x}/upload", headers={
+                "X-CSRF-Token": token},
+                data={"design": (f, "good.png")},
+                content_type="multipart/form-data")
+        post(f"/api/sets/{sid_x}/mockups",
+             {"design": [s for s in client.get("/api/sets").get_json()
+                         if s["id"] == sid_x][0]["design_url"],
+              "photos": ({"333": photo_url} if sid_x == "fix3-set4"
+                         else {"444": photo_url})})
+    r = post("/api/sets/fix3-set4/publish-draft", {"dry_run": True})
+    j = r.get_json()
+    payload = (j.get("products") or [{}])[0]
+    row = (j.get("checklist") or [{}])[0]
+    check("non-rectangular grid still publishable on price",
+          r.status_code == 200, str(r.status_code))
+    check("payload has only priced pairs, unpriced skipped",
+          len(payload.get("variants") or []) == 4,
+          str(payload.get("variants")))
+    check("checklist shows actual payload variants + skipped pairs",
+          row.get("variants") == 4 and row.get("skipped_pairs") == 2,
+          str(row))
+    check("dry-run warns about skipped pairs",
+          any("will not be created" in (w or "")
+              for w in (j.get("warnings") or [])),
+          str(j.get("warnings")))
+    r = post("/api/sets/fix3-set5/publish-draft", {"dry_run": True})
+    check("product with no price at all still blocked",
+          r.status_code == 400
+          and "sale price" in str(r.get_json()),
+          str(r.status_code))
+
+    # ---- 14. Logout ----
     print("== 13. Logout ==")
     r = post("/api/logout", {})
     check("logout ok", r.status_code == 200, str(r.status_code))

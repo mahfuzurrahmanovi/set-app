@@ -319,13 +319,32 @@ def variant_price_for_pair(product, colour, size):
     return parse_money_decimal(raw)
 
 
-def variant_prices_cover(product):
-    """True when every selected pair has a known price."""
-    for colour in product.get("colours") or []:
-        for size in product.get("sizes") or []:
-            if variant_price_for_pair(product, colour, size) is None:
-                return False
-    return True
+def priced_pair_count(product):
+    """Selected colour/size pairs with a known price.
+
+    An explicit sale price prices every pair. Otherwise only pairs
+    with a stored per-variant price count: real store listings are
+    often non-rectangular (the Oregon tee has 88 variants across
+    12 colours x 8 sizes, not 96), so unpriced pairs are simply not
+    created, not a reason to block the whole publish.
+    """
+    colours = product.get("colours") or []
+    sizes = product.get("sizes") or []
+    if parse_money_decimal(product.get("sale_price")) is not None:
+        return len(colours) * len(sizes)
+    n = 0
+    for colour in colours:
+        for size in sizes:
+            if variant_price_for_pair(product, colour, size) is not None:
+                n += 1
+    return n
+
+
+def skipped_pair_count(product):
+    """Selected pairs with no price (never created on publish)."""
+    selected = len(product.get("colours") or []) \
+        * len(product.get("sizes") or [])
+    return selected - priced_pair_count(product)
 
 
 def profit_problems(set_obj):
@@ -367,7 +386,11 @@ def incomplete_products(set_obj):
     """Products missing colours, sizes, or a usable price.
 
     A product is publishable on price when it has an explicit sale
-    price OR its per-variant prices cover every selected pair.
+    price OR at least one priced pair. Unpriced pairs are skipped on
+    publish (and warned about in the dry-run), not a blocker: real
+    listings are non-rectangular, so demanding full coverage would
+    make the Oregon tee (88 real variants over 96 selected pairs)
+    unpublishable.
     """
     missing = []
     for p in set_obj.get("products", []):
@@ -377,7 +400,7 @@ def incomplete_products(set_obj):
         if not (p.get("sizes") or []):
             reasons.append("sizes")
         if (parse_money_decimal(p.get("sale_price")) is None
-                and not variant_prices_cover(p)):
+                and priced_pair_count(p) == 0):
             reasons.append("sale price")
         if reasons:
             missing.append({
@@ -1578,7 +1601,10 @@ def publish_checklist(set_obj, payloads):
                      f"{float(max(prices)) - float(base):.2f}"
             min_profit = min(prices) - base
         if combine:
-            variants = len(p.get("colours") or []) * len(p.get("sizes") or [])
+            combined = payloads[0] if payloads else None
+            variants = len([v for v in (combined or {}).get("variants", [])
+                            if v.get("option1") == title]) \
+                if combined else 0
             image_urls = []
             if p.get("hero_image"):
                 image_urls.append(p["hero_image"])
@@ -1604,6 +1630,7 @@ def publish_checklist(set_obj, payloads):
             "base_cost": (f"{float(base):.2f}" if base is not None else None),
             "profit": profit,
             "variants": variants,
+            "skipped_pairs": skipped_pair_count(p),
             "images": images,
             "ready": bool(set_obj.get("design_url")
                           and mockup_is_current(set_obj, p)
@@ -1660,10 +1687,40 @@ def publish_draft(sid):
             "products": problems,
         }), 400
     summary = variant_summary(s)
-    if not summary["guard_ok"]:
-        return jsonify({"error": summary["message"]}), 400
+    # The variant-limit guard counts variants that will actually be
+    # created (priced pairs), not selected pairs: a non-rectangular
+    # listing creates fewer variants than colours x sizes.
+    publishable = {p["product_id"]: priced_pair_count(p)
+                   for p in s.get("products", [])}
+    if s.get("grouping", "combine") == "combine":
+        publishable_total = sum(publishable.values())
+        if publishable_total > 100:
+            return jsonify({
+                "error": f"Combine mode: {publishable_total} variants "
+                         "in one listing. Shopify allows 100 per "
+                         "product. Over the limit: split the set or "
+                         "reduce colours/sizes.",
+            }), 400
+    else:
+        over = [p.get("title") or p["product_id"]
+                for p in s.get("products", [])
+                if publishable[p["product_id"]] > 100]
+        if over:
+            return jsonify({
+                "error": "Split mode: one listing per product. Over the "
+                         "100-variant limit: " + ", ".join(over),
+            }), 400
     payloads = build_draft_payloads(s)
     warnings = []
+    skipped = [(p.get("title") or p["product_id"],
+                skipped_pair_count(p))
+               for p in s.get("products", [])
+               if skipped_pair_count(p) > 0]
+    if skipped:
+        warnings.append(
+            "These selected colour/size pairs have no store price and "
+            "will not be created: "
+            + ", ".join(f"{t} ({n})" for t, n in skipped) + ".")
     if not shopify_api.public_url():
         warnings.append(
             "No public app URL is configured, so published drafts will "
@@ -1709,6 +1766,7 @@ def publish_draft(sid):
             "dry_run": True,
             "grouping": s.get("grouping", "combine"),
             "variant_summary": summary,
+            "publishable_variants": publishable,
             "products": payloads,
             "warnings": warnings,
             "checklist": publish_checklist(s, payloads),

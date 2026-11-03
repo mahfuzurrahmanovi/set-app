@@ -23,9 +23,10 @@ wipes sets, uploads, mockups and the Shopify token file.
 
 ## Tests
 ```
-.venv/bin/python server/fix3_test.py     # fix round 3: 84 checks
+.venv/bin/python server/gearlaunch_flow_test.py  # Gearlaunch flow: 55 checks
+.venv/bin/python server/fix3_test.py     # fix round 3: 89 checks
 .venv/bin/python server/rebuild_test.py  # round 1: 45 checks
-.venv/bin/python server/rebuild2_test.py # round 2: 49 checks
+.venv/bin/python server/rebuild2_test.py # round 2: 50 checks
 .venv/bin/python server/fix_test.py      # fix 2.1: 24 checks
 ```
 All suites run against temp data roots and mock Shopify clients; none

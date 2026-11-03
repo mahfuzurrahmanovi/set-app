@@ -105,6 +105,7 @@ def template_entry(template):
         "print_area": dict(template["print_area"]),
         "images": list(template["images"]),
         "hero_image": template["images"][0] if template["images"] else None,
+        "position": "front",
         "mockups": [],
         "locked": True,
         "override_placement": None,

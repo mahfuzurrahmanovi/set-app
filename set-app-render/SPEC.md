@@ -152,6 +152,48 @@ production-ready. Fix round 3 closed the gaps; full test evidence in
   set-page theme work. First real draft publish is Ovi's to trigger;
   it has only ever been tested with a mock client and dry-run.
 
+## Gearlaunch-style flow (2026-11-03, local only, not yet deployed)
+
+Exact same experience as Ovi's 5 Gearlaunch screenshots, with one
+deliberate removal: NO live profit anywhere, because Shopify already
+has profit. Price fields stay; base cost stays a plain cost input
+only, never computed into profit, and never blocks a publish. This
+supersedes the round-3 negative-profit publish guard.
+
+- **Campaigns list (home view):** Create campaign, filter by name /
+  path / tags, bulk Activate / Deactivate / Delete / Tag, one row per
+  campaign with art, name, path, tags, orders (-, the app tracks no
+  orders), items, status (draft/active/inactive/locked), fulfillment
+  (LAUNCH_END label only, not a real fulfillment mode), end date.
+  On a phone the rows stack; the same columns are shown, not a
+  9-column desktop table.
+- **Campaign settings (per campaign):** name, URL path, tags,
+  description (with a How To Order text button), storefront homepage
+  toggle, countdown timer + fudge factor, hide # of purchases,
+  Cloak & Dagger (hide from search engines, social buttons), upsell
+  discount, TikTok / Snapchat / Facebook pixels. All stored and
+  persisted on the Render disk; they feed the hidden set page as
+  plain notes only. Nothing here publishes anything live.
+- **Designer:** FRONT / BACK tabs, large mockup with dashed placement
+  box, artwork dimensions + DPI, Remove Artwork, PRODUCTS list with
+  Refresh + Add products. A set may hold any number of products via
+  the existing Shopify picker (the 14-product Gearlaunch example is
+  breadth, not a hardcoded list); no prices or costs are invented.
+  Each product card has a thumbnail, price, Front/Back position
+  radio (Back is stored; back printing is not built), Pick colors
+  swatches, and Default color.
+- **Pick colors modal:** Select All, available colors grid with
+  ticks, selected colors as removable chips, Default color, Cancel /
+  Save. Save updates that product's colours and default.
+- Endpoints: GET/POST /api/campaigns, POST /api/sets/bulk-campaign,
+  GET/POST /api/sets/<sid>/campaign, POST
+  /api/sets/<sid>/products/<pid>/position, POST
+  /api/sets/<sid>/products/<pid>/colors. Full plan:
+  `gearlaunch-flow-plan.md`; tests: `gearlaunch-flow-test-log.md`
+  (263 checks across suites, 0 failed). Deploy is outstanding: the
+  local copy is not a git repo, so nothing was pushed to GitHub or
+  Render by this build.
+
 ## Build order
 1. Mockup engine (placement math + compositing) – proven with a test.
 2. Set CRUD + master/unlock data model (JSON store for v1).

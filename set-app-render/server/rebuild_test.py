@@ -174,11 +174,13 @@ def main():
                   r.get_json()["validation"]["transparent"] is True)
             r = client.post(f"/api/sets/{sid}/publish-draft",
                             json={"dry_run": True})
-            check("negative profit blocks dry-run",
-                  r.status_code == 400
+            # Gearlaunch flow (2026-11-03): profit removed, Shopify
+            # owns profit, so a price below base cost no longer blocks.
+            check("price below base cost does NOT block dry-run",
+                  r.status_code == 200
                   and len(r.get_json().get("products", [])) == 3,
                   str(r.status_code))
-            check("shopify client not called on guard block",
+            check("shopify client not called on dry-run",
                   calls == [])
             for pid in ("catalog:printify-80", "catalog:printify-945",
                         "catalog:printify-48"):

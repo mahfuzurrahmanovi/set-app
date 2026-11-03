@@ -314,10 +314,22 @@ def main():
         for pid in ("catalog:printify-945", "catalog:printify-48"):
             client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                         json={"sale_price": 10, "base_cost": 12})
+        # Section 8 removed the design, so re-upload it first: without
+        # a design the dry-run is (correctly) blocked by the design
+        # guard, which would mask the profit point being tested.
+        with open(design, "rb") as fh:
+            r = client.post(f"/api/sets/{sid}/upload",
+                            data={"design": (fh, "design.png")},
+                            content_type="multipart/form-data")
+        check("design re-uploaded for guard test",
+              r.status_code == 200, str(r.status_code))
         r = client.post(f"/api/sets/{sid}/publish-draft",
                         json={"dry_run": True})
-        check("negative profit still blocks dry-run",
-              r.status_code == 400, str(r.status_code))
+        # Gearlaunch flow (2026-11-03): profit removed, Shopify owns
+        # profit, so a price below base cost no longer blocks.
+        check("price below base cost does NOT block dry-run",
+              r.status_code == 200 and r.get_json().get("dry_run") is True,
+              str(r.status_code) + str(r.get_json())[:200])
         r = client.get("/api/sets")
         mine = [s for s in r.get_json() if s["id"] == sid][0]
         check("api shape extended not narrowed",

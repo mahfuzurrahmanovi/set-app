@@ -206,6 +206,178 @@ def bump_design_version(set_obj):
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
+# --- Gearlaunch-style campaigns (2026-11-03) ---
+# A campaign IS a set, with a Gearlaunch-style status and settings
+# block. No profit is stored or computed anywhere in this flow:
+# Shopify already owns profit, so the app only stores price and a
+# plain base-cost input, and never blocks on cost.
+CAMPAIGN_STATUSES = ("draft", "active", "inactive", "locked")
+
+
+def campaign_defaults():
+    return {
+        "status": "draft",
+        "fulfillment": "LAUNCH_END",
+        "end_date": None,
+        "storefront_homepage": False,
+        "show_countdown": False,
+        "fudge_factor": 0,
+        "hide_purchases": False,
+        "hide_from_search_engines": False,
+        "social_buttons": False,
+        "upsell_discount": None,
+        "tiktok_pixel": "",
+        "snapchat_pixel": "",
+        "facebook": {
+            "custom_audience": "",
+            "conversions_api_token": "",
+            "page_view_pixel": "",
+            "add_to_cart_pixel": "",
+            "checkout_pixel": "",
+        },
+    }
+
+
+def campaign_of(set_obj):
+    """Merged campaign settings for a set (old sets lack the field)."""
+    merged = campaign_defaults()
+    stored = set_obj.get("campaign") or {}
+    for key, value in stored.items():
+        if key == "facebook" and isinstance(value, dict):
+            merged["facebook"].update(value)
+        elif key in merged:
+            merged[key] = value
+    return merged
+
+
+def campaign_view(set_obj):
+    """Settings view for one set: top-level fields + campaign block."""
+    campaign = campaign_of(set_obj)
+    slug = set_obj.get("slug") or ""
+    shop = shopify_api.shop_domain()
+    return {
+        "id": set_obj["id"],
+        "name": set_obj.get("name") or "",
+        "slug": slug,
+        "url_path": "/" + slug if slug else "",
+        "store_url": (f"https://{shop}/{slug}"
+                      if shop and slug else None),
+        "tags": list(set_obj.get("tags") or []),
+        "description": set_obj.get("description") or "",
+        "grouping": set_obj.get("grouping", "combine"),
+        "campaign": campaign,
+    }
+
+
+def campaign_summary(set_obj):
+    """One row of the campaigns list (Gearlaunch columns, no profit)."""
+    campaign = campaign_of(set_obj)
+    products = set_obj.get("products") or []
+    art = set_obj.get("design_url")
+    if not art and products:
+        first = products[0]
+        art = (first.get("hero_image")
+               or (first.get("mockups") or [None])[0]
+               or (first.get("images") or [None])[0]
+               or first.get("image"))
+    slug = set_obj.get("slug") or ""
+    return {
+        "id": set_obj["id"],
+        "art_url": art,
+        "name": set_obj.get("name") or "",
+        "path": "/" + slug if slug else "",
+        "tags": list(set_obj.get("tags") or []),
+        # The app tracks no orders: Gearlaunch shows "-" here too.
+        "orders": None,
+        "items": len(products),
+        "status": campaign["status"],
+        "fulfillment": campaign["fulfillment"],
+        "end": campaign["end_date"],
+    }
+
+
+def _validate_campaign(raw):
+    """Validate a partial campaign dict; returns (cleaned, error)."""
+    if not isinstance(raw, dict):
+        return None, "campaign must be an object"
+    cleaned = {}
+    if "status" in raw:
+        if raw["status"] not in CAMPAIGN_STATUSES:
+            return None, "campaign status must be draft, active, " \
+                         "inactive or locked"
+        cleaned["status"] = raw["status"]
+    if "fulfillment" in raw:
+        value = str(raw["fulfillment"] or "").strip()
+        if len(value) > 50:
+            return None, "fulfillment must be 50 characters or fewer"
+        cleaned["fulfillment"] = value or "LAUNCH_END"
+    if "end_date" in raw:
+        value = raw["end_date"]
+        if value in (None, ""):
+            cleaned["end_date"] = None
+        elif isinstance(value, str) and len(value) <= 20:
+            cleaned["end_date"] = value
+        else:
+            return None, "end date must be 20 characters or fewer"
+    for field in ("storefront_homepage", "show_countdown",
+                  "hide_purchases", "hide_from_search_engines",
+                  "social_buttons"):
+        if field in raw:
+            if not isinstance(raw[field], bool):
+                return None, f"{field} must be true or false"
+            cleaned[field] = raw[field]
+    if "fudge_factor" in raw:
+        value = raw["fudge_factor"]
+        if isinstance(value, bool):
+            return None, "fudge factor must be a whole number"
+        if isinstance(value, float) and not value.is_integer():
+            return None, "fudge factor must be a whole number"
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None, "fudge factor must be a whole number"
+        if not (0 <= number <= 10000):
+            return None, "fudge factor must be between 0 and 10000"
+        cleaned["fudge_factor"] = number
+    if "upsell_discount" in raw:
+        value = raw["upsell_discount"]
+        if value in (None, ""):
+            cleaned["upsell_discount"] = None
+        else:
+            dec = parse_money_decimal(value)
+            if dec is None or dec < 0:
+                return None, "upsell discount must be 0 or more"
+            cleaned["upsell_discount"] = float(dec)
+    for field in ("tiktok_pixel", "snapchat_pixel"):
+        if field in raw:
+            value = str(raw[field] or "")
+            if len(value) > 255:
+                return None, f"{field} must be 255 characters or fewer"
+            cleaned[field] = value
+    if "facebook" in raw:
+        if not isinstance(raw["facebook"], dict):
+            return None, "facebook pixels must be an object"
+        fb = {}
+        for field in ("custom_audience", "conversions_api_token",
+                      "page_view_pixel", "add_to_cart_pixel",
+                      "checkout_pixel"):
+            if field in raw["facebook"]:
+                value = str(raw["facebook"][field] or "")
+                if len(value) > 255:
+                    return None, f"{field} must be 255 characters or fewer"
+                fb[field] = value
+        cleaned["facebook"] = fb
+    return cleaned, None
+
+
+def _parse_tags(raw):
+    if isinstance(raw, str):
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    if isinstance(raw, list):
+        return [str(t).strip() for t in raw if str(t).strip()]
+    return None
+
+
 def layer_png_path(sid, lid):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     return os.path.join(UPLOAD_DIR, f"text_{sid}_{lid}.png")
@@ -345,41 +517,6 @@ def skipped_pair_count(product):
     selected = len(product.get("colours") or []) \
         * len(product.get("sizes") or [])
     return selected - priced_pair_count(product)
-
-
-def profit_problems(set_obj):
-    """Products where a price is below base cost (negative profit).
-
-    With an explicit sale price the check is sale vs base. With
-    per-variant prices, every pair below base is a problem.
-    """
-    problems = []
-    for p in set_obj.get("products", []):
-        cost = parse_money_decimal(p.get("base_cost"))
-        if cost is None:
-            continue
-        sale = parse_money_decimal(p.get("sale_price"))
-        if sale is not None:
-            if sale < cost:
-                problems.append({
-                    "product_id": p["product_id"],
-                    "title": p.get("title") or p["product_id"],
-                    "sale_price": float(sale),
-                    "base_cost": float(cost),
-                })
-            continue
-        for colour in p.get("colours") or []:
-            for size in p.get("sizes") or []:
-                price = variant_price_for_pair(p, colour, size)
-                if price is not None and price < cost:
-                    problems.append({
-                        "product_id": p["product_id"],
-                        "title": p.get("title") or p["product_id"],
-                        "sale_price": float(price),
-                        "base_cost": float(cost),
-                        "variant": f"{colour} / {size}",
-                    })
-    return problems
 
 
 def incomplete_products(set_obj):
@@ -682,6 +819,189 @@ def list_sets():
     return jsonify(list(load_sets().values()))
 
 
+@app.route("/api/campaigns", methods=["GET"])
+def list_campaigns():
+    """Gearlaunch-style campaigns list (one row per set, no profit).
+
+    ?q= filters by name, path (slug) or tag; ?status= filters by
+    campaign status. Orders are always null: the app tracks no
+    orders, so the list honestly shows "-" for orders.
+    """
+    q = (request.args.get("q") or "").strip().lower()
+    status = (request.args.get("status") or "").strip().lower()
+    rows = []
+    for s in load_sets().values():
+        row = campaign_summary(s)
+        if status and row["status"] != status:
+            continue
+        if q:
+            hay = " ".join([row["name"], row["path"]]
+                           + row["tags"]).lower()
+            if q not in hay:
+                continue
+        rows.append(row)
+    return jsonify(rows)
+
+
+@app.route("/api/campaigns", methods=["POST"])
+def create_campaign():
+    """Create a campaign: creates a set with campaign defaults."""
+    body = request.get_json(force=True) or {}
+    name = str(body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "Campaign name is required."}), 400
+    if len(name) > 255:
+        return jsonify({"error": "Title must be 255 characters or fewer."}), 400
+    slug = str(body.get("slug") or "").strip()
+    if slug and (len(slug) > 100 or not SLUG_RE.match(slug)):
+        return jsonify({
+            "error": "URL slug may only use lowercase letters, numbers "
+                     "and hyphens, e.g. oregon-ducks-set."
+        }), 400
+    tags = _parse_tags(body.get("tags"))
+    if tags is None:
+        tags = []
+    sets = load_sets()
+    sid = uuid.uuid4().hex[:12]
+    new_set = {
+        "id": sid,
+        "name": name,
+        "description": "",
+        "tags": tags,
+        "slug": slug,
+        "campaign": campaign_defaults(),
+        "grouping": "combine",
+        "publish_state": "draft",
+        "publish_error": None,
+        "artwork_locked": False,
+        "design_url": None,
+        "design_version": 1,
+        "text_layers": [],
+        "draft_saved_at": None,
+        "products": [],
+        "master_placement": {"x": 0.5, "y": 0.45, "scale": 0.5,
+                             "angle": 0},
+    }
+    sets[sid] = new_set
+    save_sets(sets)
+    return jsonify(new_set), 201
+
+
+@app.route("/api/sets/bulk-campaign", methods=["POST"])
+def bulk_campaign():
+    """Bulk Activate / Deactivate / Delete / Tag for campaigns.
+
+    Locked campaigns are skipped by activate/deactivate and listed
+    in "skipped". Delete removes the sets (orphan files cleaned
+    after removal). Returns the affected full sets for the UI.
+    """
+    body = request.get_json(force=True) or {}
+    action = body.get("action")
+    if action not in ("activate", "deactivate", "delete", "tag"):
+        return jsonify({
+            "error": "action must be activate, deactivate, delete or tag"
+        }), 400
+    ids = body.get("ids") or []
+    if not isinstance(ids, list):
+        return jsonify({"error": "ids must be a list"}), 400
+    tag = None
+    if action == "tag":
+        tag = str(body.get("tag") or "").strip()
+        if not tag:
+            return jsonify({"error": "tag is required for Tag"}), 400
+    sets = load_sets()
+    updated, skipped, deleted, doomed = [], [], [], []
+    for sid in ids:
+        s = sets.get(str(sid))
+        if s is None:
+            continue
+        if action in ("activate", "deactivate") \
+                and campaign_of(s)["status"] == "locked":
+            skipped.append(s["id"])
+            continue
+        if action == "activate":
+            s["campaign"] = campaign_of(s)
+            s["campaign"]["status"] = "active"
+            updated.append(s)
+        elif action == "deactivate":
+            s["campaign"] = campaign_of(s)
+            s["campaign"]["status"] = "inactive"
+            updated.append(s)
+        elif action == "tag":
+            if tag not in (s.get("tags") or []):
+                s.setdefault("tags", []).append(tag)
+            updated.append(s)
+        elif action == "delete":
+            doomed.append(sets.pop(s["id"]))
+            deleted.append(s["id"])
+    save_sets(sets)
+    for gone in doomed:
+        _delete_file_if_orphan(sets, gone.get("design_url"))
+        for layer in gone.get("text_layers") or []:
+            _delete_file_if_orphan(
+                sets, layer_png_url(gone["id"], layer["id"]))
+    return jsonify({"updated": len(updated), "skipped": skipped,
+                    "deleted": len(deleted), "sets": updated})
+
+
+@app.route("/api/sets/<sid>/campaign", methods=["GET"])
+def get_campaign_settings(sid):
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    return jsonify(campaign_view(sets[sid]))
+
+
+@app.route("/api/sets/<sid>/campaign", methods=["POST"])
+def save_campaign_settings(sid):
+    """Save campaign settings: validate everything first, then one
+    atomic save. Top-level name/slug/tags/description and the
+    campaign block are saved together; campaign fields not sent
+    keep their current values."""
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    s = sets[sid]
+    if "name" in body:
+        name = str(body["name"]).strip()
+        if not name:
+            return jsonify({"error": "Campaign name is required."}), 400
+        if len(name) > 255:
+            return jsonify({"error": "Title must be 255 characters or fewer."}), 400
+    if "slug" in body:
+        slug = str(body["slug"]).strip()
+        if slug and (len(slug) > 100 or not SLUG_RE.match(slug)):
+            return jsonify({
+                "error": "URL slug may only use lowercase letters, numbers "
+                         "and hyphens, e.g. oregon-ducks-set."
+            }), 400
+    tags = None
+    if "tags" in body:
+        tags = _parse_tags(body["tags"])
+        if tags is None:
+            return jsonify({"error": "tags must be a list or a string"}), 400
+    cleaned, err = _validate_campaign(body.get("campaign") or {})
+    if err:
+        return jsonify({"error": err}), 400
+    if "name" in body:
+        s["name"] = str(body["name"]).strip()
+    if "slug" in body:
+        s["slug"] = str(body["slug"]).strip()
+    if "description" in body:
+        s["description"] = str(body["description"])
+    if tags is not None:
+        s["tags"] = tags
+    merged = campaign_of(s)
+    merged.update(cleaned)
+    if "facebook" in cleaned:
+        merged["facebook"].update(cleaned["facebook"])
+    s["campaign"] = merged
+    s["draft_saved_at"] = now_iso()
+    save_sets(sets)
+    return jsonify(campaign_view(s))
+
+
 @app.route("/api/sets/<sid>/export", methods=["GET"])
 def export_set(sid):
     """Download one set as JSON (backup / move between installs)."""
@@ -708,6 +1028,7 @@ def create_set():
         "description": "",
         "tags": [],
         "slug": "",
+        "campaign": campaign_defaults(),
         "grouping": "combine",
         "publish_state": "draft",
         "publish_error": None,
@@ -825,6 +1146,7 @@ def _entry_from_details(details):
         "variant_prices": prices,
         "variants": details.get("variants"),
         "default_color": colours[0] if colours else None,
+        "position": "front",
         "mockups": [],
         "mockup_versions": {},
         "hero_image": None,
@@ -898,6 +1220,71 @@ def set_default_color(sid, pid):
         }), 400
     p["default_color"] = colour
     p["colours"] = [colour] + [c for c in p["colours"] if c != colour]
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/position",
+           methods=["POST"])
+def set_product_position(sid, pid):
+    """Per-product Front/Back position (Gearlaunch designer radio).
+
+    Stored only. Back-side printing is not built, so choosing Back
+    does not change the mockup; the UI says so honestly.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    position = str(body.get("position") or "").strip().lower()
+    if position not in ("front", "back"):
+        return jsonify({"error": "position must be front or back"}), 400
+    p["position"] = position
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/colors",
+           methods=["POST"])
+def set_product_colors(sid, pid):
+    """Pick colors modal save: selected colours + default colour.
+
+    Colours must come from the product's full colour list
+    (all_colours, falling back to the current selection). The
+    default, when given, must be in the selection and moves to the
+    front, matching the existing default-colour behaviour.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    if "colours" not in body or not isinstance(body["colours"], list):
+        return jsonify({"error": "colours must be a list"}), 400
+    colours = list(dict.fromkeys(str(c) for c in body["colours"]))
+    allowed = p.get("all_colours") or p.get("colours") or []
+    if any(c not in allowed for c in colours):
+        return jsonify({
+            "error": "Colours must come from the product's colour list."
+        }), 400
+    default = body.get("default_color")
+    if default is not None and default != "":
+        default = str(default)
+        if default not in colours:
+            return jsonify({
+                "error": "Default colour must be one of the selected colours."
+            }), 400
+        colours = [default] + [c for c in colours if c != default]
+        p["default_color"] = default
+    else:
+        if p.get("default_color") not in colours:
+            p["default_color"] = colours[0] if colours else None
+    p["colours"] = colours
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -1168,6 +1555,13 @@ def duplicate_set(sid):
     new_set["publish_record"] = None
     new_set["publish_partial"] = None
     new_set["draft_saved_at"] = None
+    # Review fix (2026-11-03): a duplicate is a fresh draft, so its
+    # campaign status resets to draft even when the original was
+    # locked or active; otherwise the copy could never be activated
+    # from the UI. Other campaign settings (pixels, countdown, etc.)
+    # are copied as-is.
+    new_set["campaign"] = campaign_of(new_set)
+    new_set["campaign"]["status"] = "draft"
     layer_id_map = {}
     for layer in new_set.get("text_layers") or []:
         new_lid = uuid.uuid4().hex[:8]
@@ -1255,8 +1649,8 @@ def set_product_pricing(sid, pid):
     """Sale price, compare-at price and base cost for one product.
 
     Compare-at must be higher than the sale price when both are set.
-    Negative profit stays allowed at save (shown as a warning);
-    publish still blocks it.
+    Base cost is a plain cost input: no profit is computed from it
+    and nothing is blocked on cost (Shopify already owns profit).
     """
     body = request.get_json(force=True) or {}
     sets = load_sets()
@@ -1593,13 +1987,9 @@ def publish_checklist(set_obj, payloads):
                 price = variant_price_for_pair(p, colour, size)
                 if price is not None:
                     prices.append(price)
-        profit = None
-        min_profit = None
+        # No profit is computed here: Shopify already owns profit.
+        # base_cost stays a plain cost input for the seller's records.
         base = parse_money_decimal(p.get("base_cost"))
-        if base is not None and prices:
-            profit = f"{float(min(prices)) - float(base):.2f} to " \
-                     f"{float(max(prices)) - float(base):.2f}"
-            min_profit = min(prices) - base
         if combine:
             combined = payloads[0] if payloads else None
             variants = len([v for v in (combined or {}).get("variants", [])
@@ -1628,16 +2018,13 @@ def publish_checklist(set_obj, payloads):
             "price_source": ("sale price" if sale is not None
                              else ("store prices" if prices else None)),
             "base_cost": (f"{float(base):.2f}" if base is not None else None),
-            "profit": profit,
             "variants": variants,
             "skipped_pairs": skipped_pair_count(p),
             "images": images,
             "ready": bool(set_obj.get("design_url")
                           and mockup_is_current(set_obj, p)
                           and p.get("colours") and p.get("sizes")
-                          and (sale is not None or prices)
-                          and base is not None
-                          and (min_profit is None or min_profit >= 0)),
+                          and (sale is not None or prices)),
         })
     return rows
 
@@ -1647,8 +2034,10 @@ def publish_draft(sid):
     """Publish a set to Shopify as DRAFT products only, never live.
 
     Guards, in order: already published; no design uploaded; products
-    missing colours/sizes/price; negative profit; variant-limit guard;
-    stale mockups (real publish only). Body {"dry_run": true} returns
+    missing colours/sizes/price; variant-limit guard; stale mockups
+    (real publish only). No profit guard: Shopify already owns profit,
+    so a price below base cost never blocks a publish. Body
+    {"dry_run": true} returns
     the planned payloads plus warnings and a per-product checklist,
     without calling Shopify and without changing publish state.
     A real publish records publish_state "published_draft" and locks
@@ -1678,13 +2067,6 @@ def publish_draft(sid):
         return jsonify({
             "error": "Some products are missing details.",
             "products": missing,
-        }), 400
-    problems = profit_problems(s)
-    if problems:
-        return jsonify({
-            "error": "Sale price is below base cost for some products. "
-                     "Raise the price so profit is not negative.",
-            "products": problems,
         }), 400
     summary = variant_summary(s)
     # The variant-limit guard counts variants that will actually be
@@ -1881,7 +2263,21 @@ def create_set_page(sid):
             blocks.append(f'<p><a href="{link}">{title}</a></p>')
         else:
             blocks.append(f"<p>{title}</p>")
-    body_html = (s.get("description") or "") + "\n" + "\n".join(blocks)
+    # Campaign settings feed the hidden page as plain notes only:
+    # the page stays hidden (published_at null), so no setting here
+    # changes anything live in the store.
+    campaign = campaign_of(s)
+    notes = []
+    if campaign["show_countdown"]:
+        notes.append(
+            f"<p>Countdown timer enabled (fudge factor "
+            f"{campaign['fudge_factor']}).</p>")
+    if campaign["social_buttons"]:
+        notes.append("<p>Social buttons enabled on the campaign page.</p>")
+    if campaign["hide_from_search_engines"]:
+        notes.append("<!-- noindex: hidden from search engines -->")
+    body_html = (s.get("description") or "") + "\n" + "\n".join(blocks) \
+        + ("\n" + "\n".join(notes) if notes else "")
     try:
         page = shopify_api.create_page(s.get("name") or "Untitled set",
                                        body_html)

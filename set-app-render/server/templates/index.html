@@ -46,6 +46,21 @@
   .layerrow { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
   .layerrow > span { flex: 1; }
   .layerrow button { width: auto; margin-top: 0; padding: 8px 12px; }
+  /* Gearlaunch-style campaigns list: stacked rows on a phone. */
+  .campaignRow { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
+  .campaignRow input[type=checkbox] { width: 22px; height: 22px; margin-top: 4px; }
+  .campaignRow .thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; background: #eee; }
+  .campaignRow button { width: auto; margin-top: 6px; padding: 8px 12px; }
+  .pill { display: inline-block; background: #e0f2fe; border-radius: 20px; padding: 2px 10px; font-size: 13px; font-weight: 700; }
+  .pill.active { background: #dcfce7; } .pill.inactive { background: #e5e5e5; } .pill.locked { background: #fee2e2; }
+  /* Pick colors modal: full phone width, scrollable, Cancel/Save at bottom. */
+  #pickColorsModal { display: none; position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,0.5); padding: 16px; box-sizing: border-box; overflow-y: auto; }
+  #pickColorsModal .card { margin-top: 0; max-height: none; }
+  .colorGrid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .colorGrid button { width: auto; margin-top: 0; padding: 10px 14px; }
+  .colorGrid button.sel { outline: 3px solid #0f766e; }
+  .chipX { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #ccc; border-radius: 20px; padding: 8px 12px; margin: 4px 4px 0 0; }
+  .chipX button { width: auto; margin-top: 0; padding: 2px 8px; }
 </style>
 </head>
 <body>
@@ -64,11 +79,39 @@
   <div id="loginResult"></div>
 </div>
 
-<div class="card">
-  <h2>Open a set</h2>
-  <p><small>Tap a set to open it, then design on it below.</small></p>
-  <div id="setList"><small>Loading sets...</small></div>
+<div class="card" id="campaignsCard">
+  <h2>Campaigns</h2>
+  <p><small>Every set is a campaign, like Gearlaunch. Tap a campaign to open its designer, or Settings for its campaign page settings.</small></p>
+  <label>Filter by name, path, tags</label><input id="campaignFilter" placeholder="e.g. golden, mind, warriors" oninput="renderSetList()">
+  <label>New campaign name</label><input id="campaignName" placeholder="e.g. Golden State Of">
+  <button onclick="createCampaign()">Create campaign</button>
+  <div class="row">
+    <button class="secondary" onclick="bulkCampaign('activate')">Activate</button>
+    <button class="secondary" onclick="bulkCampaign('deactivate')">Deactivate</button>
+    <button class="secondary" onclick="bulkCampaign('delete')">Delete</button>
+  </div>
+  <label>Tag for selected campaigns</label><input id="bulkTag" placeholder="e.g. warriors">
+  <button class="secondary" onclick="bulkCampaign('tag')">Tag selected</button>
+  <div id="campaignsList"><small>Loading campaigns...</small></div>
   <p id="currentSetLine"><small>No set selected yet.</small></p>
+  <p><small>Columns: art, name, path, tags, orders, items, status, fulfillment, end. Orders shows - because this app tracks no orders; Ovi fulfils manually. Profit is not shown here: Shopify already has profit.</small></p>
+</div>
+
+<div id="pickColorsModal">
+  <div class="card">
+    <h2 id="pickColorsTitle">Pick colors</h2>
+    <p><small>Available colors</small></p>
+    <button class="secondary" onclick="pickColorsSelectAll()">Select All</button>
+    <div id="pickColorsAvailable" class="colorGrid"></div>
+    <p><small>Selected colors</small></p>
+    <div id="pickColorsSelected"></div>
+    <label>Default color</label><select id="pickColorsDefault"></select>
+    <div class="row">
+      <button class="secondary" onclick="closePickColors()">Cancel</button>
+      <button onclick="savePickColors()">Save</button>
+    </div>
+    <div id="pickColorsResult"></div>
+  </div>
 </div>
 
 <div class="card topbar">
@@ -126,7 +169,10 @@
 
   <div class="card">
     <h2 id="productsHeader">PRODUCTS (0)</h2>
-    <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    <div class="row">
+      <button class="secondary" onclick="refreshSelectedProduct()">Refresh</button>
+      <button class="secondary" onclick="scrollToPickers()">Add products</button>
+    </div>
     <div id="products"><small>No set selected yet. Create a set first.</small></div>
     <button class="secondary" onclick="scrollToPickers()">Add products</button>
     <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
@@ -151,6 +197,43 @@
   </div>
   <button onclick="saveDetails()">Save set details</button>
   <div id="detailResult"></div>
+</div>
+
+<div class="card" id="campaignSettingsCard">
+  <h2>Campaign settings</h2>
+  <p><small>Gearlaunch-style campaign settings for the open set. These are stored in the app and feed the hidden set page only; nothing here publishes anything live.</small></p>
+  <p><small>URL path: <span id="campUrlPreview">fansfit.shop/</span></small></p>
+  <h3>Storefront</h3>
+  <label><input type="checkbox" id="campStorefrontHomepage"> Add campaign to storefront homepage</label>
+  <h3>Conversion tools</h3>
+  <label><input type="checkbox" id="campShowCountdown"> Display countdown timer</label>
+  <label><input type="checkbox" id="campHidePurchases"> Hide # of purchases</label>
+  <label>Fudge factor</label><input id="campFudge" inputmode="numeric" value="0">
+  <h3>Cloak &amp; Dagger</h3>
+  <label><input type="checkbox" id="campHideSearch"> Hide from search engines</label>
+  <label><input type="checkbox" id="campSocialButtons"> Social buttons on campaign landing page</label>
+  <h3>Upsells</h3>
+  <label>Upsell discount</label><input id="campUpsell" inputmode="decimal" placeholder="e.g. 2.00">
+  <h3>Tik Tok Pixel</h3>
+  <label>Tik Tok Pixel</label><input id="campTiktok" placeholder="Pixel ID">
+  <h3>Snapchat Pixel</h3>
+  <label>Snapchat Pixel</label><input id="campSnapchat" placeholder="Pixel ID">
+  <h3>Override default pixels</h3>
+  <p><small>New Facebook pixel</small></p>
+  <label>Custom Audience</label><input id="campFbAudience" placeholder="Custom Audience">
+  <label>Conversions API access token</label><input id="campFbCapi" placeholder="Access token">
+  <p><small>Old Facebook pixels</small></p>
+  <label>Key Page View (land on buy page)</label><input id="campFbPageView" placeholder="Pixel ID">
+  <label>Add to Cart (add to cart)</label><input id="campFbAddToCart" placeholder="Pixel ID">
+  <label>Checkout (convert to sale)</label><input id="campFbCheckout" placeholder="Pixel ID">
+  <h3>End date</h3>
+  <label>End (optional, e.g. 3/1/26)</label><input id="campEnd" placeholder="e.g. 3/1/26">
+  <h3>Description</h3>
+  <label>Description</label><textarea id="campDesc" rows="6" placeholder="Campaign description"></textarea>
+  <button class="secondary" onclick="useHowToOrder()">Use How To Order text</button>
+  <button onclick="saveCampaignSettings()">Save campaign settings</button>
+  <div id="campaignSettingsResult"></div>
+  <button class="secondary" onclick="scrollToDesigner()">Designer</button>
 </div>
 
 <div class="card">
@@ -203,12 +286,12 @@
 </div>
 
 <div class="card">
-  <h2>Variants, profit, publish</h2>
+  <h2>Variants and publish</h2>
   <div id="variantCount"><small>Open a set to see variant counts.</small></div>
   <button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
   <button onclick="publishDraft()">Publish as DRAFT to Shopify (not live)</button>
   <div id="publishResult"></div>
-  <p><small>Draft only, never live. Ovi fulfils orders manually. A draft with negative profit is blocked: raise the price first.</small></p>
+  <p><small>Draft only, never live. Ovi fulfils orders manually. Profit is not shown or checked here: Shopify already has profit.</small></p>
 </div>
 
 <div class="card">
@@ -337,18 +420,150 @@ function syncCache() {
     if (allSets[i].id === currentSet.id) { allSets[i] = currentSet; break; }
   }
 }
+function campaignOf(s) { return (s && s.campaign) || {}; }
 function renderSetList() {
-  const box = document.getElementById('setList');
-  if (!allSets.length) { box.innerHTML = '<small>No sets yet. Create one below.</small>'; return; }
-  box.innerHTML = allSets.map(function(s) {
+  const box = document.getElementById('campaignsList');
+  if (!box) return;
+  const q = (document.getElementById('campaignFilter') ? document.getElementById('campaignFilter').value : '').trim().toLowerCase();
+  const rows = allSets.filter(function(s) {
+    if (!q) return true;
+    const hay = ((s.name || '') + ' /' + (s.slug || '') + ' ' + (s.tags || []).join(' ')).toLowerCase();
+    return hay.indexOf(q) !== -1;
+  });
+  if (!rows.length) { box.innerHTML = '<small>No campaigns yet. Create one above.</small>'; return; }
+  box.innerHTML = rows.map(function(s) {
     const n = s.products.length;
-    const label = esc(s.name) + ' (' + n + (n === 1 ? ' product' : ' products') + ')';
-    const cls = currentSet && currentSet.id === s.id ? '' : 'secondary';
+    const camp = campaignOf(s);
+    const status = camp.status || 'draft';
+    const pillCls = status === 'active' ? 'pill active' : status === 'inactive' ? 'pill inactive' : status === 'locked' ? 'pill locked' : 'pill';
+    const first = s.products[0];
+    const art = s.design_url || (first && (first.hero_image || (first.mockups && first.mockups[0]) || (first.images && first.images[0]) || first.image)) || '';
+    const artHtml = art ? '<img class="thumb" src="' + esc(art) + '" alt="">' : '<span class="thumb" style="display:inline-block"></span>';
+    const openCls = currentSet && currentSet.id === s.id ? '' : 'secondary';
     const suffix = currentSet && currentSet.id === s.id ? ' (open)' : '';
-    return '<div style="display:flex;gap:8px;margin-top:8px"><button style="flex:1;margin-top:0" class="' + cls + '" onclick="selectSet(\'' + esc(s.id) + '\')">' + label + suffix + '</button>'
-      + '<button class="secondary" style="width:auto;margin-top:0" onclick="duplicateSet(\'' + esc(s.id) + '\')">Duplicate</button>'
-      + '<button class="danger" style="width:auto;margin-top:0" onclick="deleteSet(\'' + esc(s.id) + '\')">Delete</button></div>';
+    return '<div class="campaignRow"><input type="checkbox" class="campaignCheck" value="' + esc(s.id) + '">' + artHtml
+      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + esc(s.name) + suffix + '</b>'
+      + '<br><small>Path: /' + esc(s.slug || '') + ' | Tags: ' + esc((s.tags || []).join(', ') || '-') + '</small>'
+      + '<br><small>Orders: - | Items: ' + n + ' | Fulfillment: ' + esc(camp.fulfillment || 'LAUNCH_END') + ' | End: ' + esc(camp.end_date || '-') + '</small>'
+      + '<br><span class="' + pillCls + '">' + esc(status.toUpperCase()) + '</span></div>'
+      + '<div><button class="' + openCls + '" onclick="selectSet(\'' + esc(s.id) + '\')">Open</button>'
+      + '<button class="secondary" onclick="openCampaignSettings(\'' + esc(s.id) + '\')">Settings</button>'
+      + '<button class="secondary" onclick="duplicateSet(\'' + esc(s.id) + '\')">Duplicate</button>'
+      + '<button class="danger" onclick="deleteSet(\'' + esc(s.id) + '\')">Delete</button></div></div>';
   }).join('');
+}
+function checkedCampaignIds() {
+  const ids = [];
+  document.querySelectorAll('.campaignCheck').forEach(function(cb) { if (cb.checked) ids.push(cb.value); });
+  return ids;
+}
+async function createCampaign() {
+  const name = document.getElementById('campaignName').value.trim();
+  if (!name) return alert('Type a campaign name first.');
+  try {
+    const r = await fetch('/api/campaigns', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: name }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Create campaign failed.');
+    document.getElementById('campaignName').value = '';
+    allSets.push(j);
+    selectSet(j.id);
+  } catch (e) { alert(e.message); }
+}
+async function bulkCampaign(action) {
+  const ids = checkedCampaignIds();
+  if (!ids.length) return alert('Tick at least one campaign first.');
+  let body = { action: action, ids: ids };
+  if (action === 'tag') {
+    const tag = document.getElementById('bulkTag').value.trim();
+    if (!tag) return alert('Type a tag first.');
+    body.tag = tag;
+  }
+  if (action === 'delete' && !confirm('Delete the selected campaigns? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/sets/bulk-campaign', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Bulk action failed.');
+    if (currentSet && ids.indexOf(currentSet.id) !== -1 && action === 'delete') {
+      currentSet = null; selectedPid = null;
+      document.getElementById('topSetName').textContent = 'No set open';
+      document.getElementById('productsHeader').textContent = 'PRODUCTS (0)';
+    }
+    await loadSetList();
+    if (j.skipped && j.skipped.length) alert('Skipped locked campaigns: ' + j.skipped.join(', '));
+  } catch (e) { alert(e.message); }
+}
+function openCampaignSettings(id) {
+  selectSet(id);
+  const card = document.getElementById('campaignSettingsCard');
+  if (card) card.scrollIntoView();
+}
+function scrollToDesigner() {
+  const el = document.querySelector('.editor');
+  if (el) el.scrollIntoView();
+}
+function fillCampaignSettings() {
+  if (!currentSet) return;
+  const c = campaignOf(currentSet);
+  const fb = c.facebook || {};
+  document.getElementById('campStorefrontHomepage').checked = !!c.storefront_homepage;
+  document.getElementById('campShowCountdown').checked = !!c.show_countdown;
+  document.getElementById('campHidePurchases').checked = !!c.hide_purchases;
+  document.getElementById('campFudge').value = (c.fudge_factor === undefined || c.fudge_factor === null) ? 0 : c.fudge_factor;
+  document.getElementById('campHideSearch').checked = !!c.hide_from_search_engines;
+  document.getElementById('campSocialButtons').checked = !!c.social_buttons;
+  document.getElementById('campUpsell').value = (c.upsell_discount === undefined || c.upsell_discount === null) ? '' : c.upsell_discount;
+  document.getElementById('campTiktok').value = c.tiktok_pixel || '';
+  document.getElementById('campSnapchat').value = c.snapchat_pixel || '';
+  document.getElementById('campFbAudience').value = fb.custom_audience || '';
+  document.getElementById('campFbCapi').value = fb.conversions_api_token || '';
+  document.getElementById('campFbPageView').value = fb.page_view_pixel || '';
+  document.getElementById('campFbAddToCart').value = fb.add_to_cart_pixel || '';
+  document.getElementById('campFbCheckout').value = fb.checkout_pixel || '';
+  document.getElementById('campEnd').value = c.end_date || '';
+  document.getElementById('campDesc').value = currentSet.description || '';
+  document.getElementById('campUrlPreview').textContent = 'fansfit.shop/' + (currentSet.slug || '');
+}
+async function saveCampaignSettings() {
+  if (!currentSet) return alert('Open a campaign first.');
+  const body = {
+    name: document.getElementById('detailName').value.trim(),
+    slug: document.getElementById('detailSlug').value.trim(),
+    description: document.getElementById('campDesc').value,
+    tags: document.getElementById('detailTags').value.trim(),
+    campaign: {
+      storefront_homepage: document.getElementById('campStorefrontHomepage').checked,
+      show_countdown: document.getElementById('campShowCountdown').checked,
+      hide_purchases: document.getElementById('campHidePurchases').checked,
+      fudge_factor: document.getElementById('campFudge').value.trim(),
+      hide_from_search_engines: document.getElementById('campHideSearch').checked,
+      social_buttons: document.getElementById('campSocialButtons').checked,
+      upsell_discount: document.getElementById('campUpsell').value.trim(),
+      end_date: document.getElementById('campEnd').value.trim(),
+      tiktok_pixel: document.getElementById('campTiktok').value.trim(),
+      snapchat_pixel: document.getElementById('campSnapchat').value.trim(),
+      facebook: {
+        custom_audience: document.getElementById('campFbAudience').value.trim(),
+        conversions_api_token: document.getElementById('campFbCapi').value.trim(),
+        page_view_pixel: document.getElementById('campFbPageView').value.trim(),
+        add_to_cart_pixel: document.getElementById('campFbAddToCart').value.trim(),
+        checkout_pixel: document.getElementById('campFbCheckout').value.trim()
+      }
+    }
+  };
+  try {
+    const j = await postSet('/campaign', body);
+    currentSet.name = j.name;
+    currentSet.slug = j.slug;
+    currentSet.tags = j.tags;
+    currentSet.description = j.description;
+    currentSet.campaign = j.campaign;
+    syncCache(); updateCurrentSetLine(); renderSetList(); fillDetails(); fillCampaignSettings(); clearDirty();
+    document.getElementById('campaignSettingsResult').innerHTML = '<p class="ok">Campaign settings saved.</p>';
+  } catch (e) { alert(e.message); }
+}
+function useHowToOrder() {
+  document.getElementById('campDesc').value = 'How To Order:\nSelect Product Color/Size\nClick "Add To Cart"\nClick "Secure Checkout" and Enter Shipping & Billing Information.\n100% Printed and Made in the USA - Shipping Worldwide!\nEnjoy a 100% Secure Checkout experience.';
+  markDirty();
 }
 async function duplicateSet(id) {
   try {
@@ -378,7 +593,7 @@ async function deleteSet(id) {
   } catch (e) { alert(e.message); }
 }
 async function loadSetList() {
-  const box = document.getElementById('setList');
+  const box = document.getElementById('campaignsList');
   let r;
   try {
     r = await fetch('/api/sets');
@@ -422,6 +637,7 @@ function selectSet(id) {
   renderSetList();
   renderProducts();
   fillDetails();
+  fillCampaignSettings();
   renderVariantCount();
   renderPublishStatus();
   renderDraftLine();
@@ -449,6 +665,7 @@ async function createSet() {
   renderSetList();
   renderProducts();
   fillDetails();
+  fillCampaignSettings();
   renderVariantCount();
   renderPublishStatus();
   renderDraftLine();
@@ -459,11 +676,6 @@ async function createSet() {
 function variantCountOf(p) {
   const c = (p.colours || []).length, s = (p.sizes || []).length;
   return (c && s) ? (c * s) : null;
-}
-function profitOf(p) {
-  if (p.sale_price === undefined || p.sale_price === null || p.sale_price === '') return null;
-  if (p.base_cost === undefined || p.base_cost === null || p.base_cost === '') return null;
-  return (+p.sale_price) - (+p.base_cost);
 }
 function money(v) {
   if (v === undefined || v === null || v === '') return 'not set';
@@ -523,7 +735,6 @@ function renderProducts() {
     const title = esc(p.title || p.product_id);
     const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>' : '';
     const vc = variantCountOf(p);
-    const profit = profitOf(p);
     const range = priceRangeOf(p);
     let priceLine;
     if (p.sale_price !== undefined && p.sale_price !== null && p.sale_price !== '') {
@@ -534,12 +745,14 @@ function renderProducts() {
     } else {
       priceLine = '<small>Selling price: not set | Unit cost: ' + money(p.base_cost) + '</small>';
     }
-    const profitLine = profit === null ? '<small>Profit: set sale price and base cost below.</small>'
-      : (profit < 0 ? '<span class="warn">Profit: ' + profit.toFixed(2) + ' (negative, publish blocked)</span>'
-      : '<span class="ok">Profit: ' + profit.toFixed(2) + ' per item</span>');
     const defaultColor = esc(p.default_color || (p.colours && p.colours[0]) || 'not set');
+    const position = p.position || 'front';
+    const positionRadios = '<div onclick="event.stopPropagation()"><small>Position: </small>'
+      + '<label><input type="radio" name="pos-' + sid + '" value="front"' + (position === 'front' ? ' checked' : '') + ' onchange="savePosition(\'' + esc(p.product_id) + '\', \'front\')"> Front</label> '
+      + '<label><input type="radio" name="pos-' + sid + '" value="back"' + (position === 'back' ? ' checked' : '') + ' onchange="savePosition(\'' + esc(p.product_id) + '\', \'back\')"> Back</label>'
+      + (position === 'back' ? '<br><small>Back side is not printed in this app yet. FRONT is the working side.</small>' : '') + '</div>';
     const swatches = (p.colours || []).map(function(c) {
-      return '<span class="swatch" title="' + esc(c) + '" style="background:' + swatchHex(c) + ';cursor:pointer" onclick="event.stopPropagation();toggleSwatch(\'' + esc(p.product_id) + '\', \'' + esc(c) + '\')"></span>';
+      return '<span class="swatch" title="' + esc(c) + '" style="background:' + swatchHex(c) + ';cursor:pointer" onclick="event.stopPropagation();openPickColors(\'' + esc(p.product_id) + '\')"></span>';
     }).join('');
     const colourOpts = p.all_colours || p.colours || [];
     const sizeOpts = p.all_sizes || p.sizes || [];
@@ -588,19 +801,19 @@ function renderProducts() {
     return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
       + '<div style="display:flex;gap:10px;align-items:flex-start">' + productThumb(p)
       + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + title + '</b>' + badge
-      + '<br>' + priceLine + ' | ' + profitLine
+      + '<br>' + priceLine
       + '<br><small>Default color: ' + defaultColor + ' | ' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + '</small>'
-      + '<div class="swatches">' + swatches + '</div></div>'
+      + '<div class="swatches">' + swatches + '</div>' + positionRadios + '</div>'
       + '<button class="secondary iconbtn" title="Remove from set" onclick="event.stopPropagation();removeProduct(\'' + esc(p.product_id) + '\')">X</button></div>'
       + staleNote
       + '<div class="row" onclick="event.stopPropagation()"><button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
       + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button></div>'
       + '<div id="preview-' + sid + '"></div>'
       + placementBlock
-      + '<details onclick="event.stopPropagation()"><summary>Pick colors</summary>'
-      + '<p><small>Colours (tick to include, or tap a swatch above):</small></p><div class="chips">' + colourChips + '</div>'
+      + '<div onclick="event.stopPropagation()"><button class="secondary" onclick="openPickColors(\'' + esc(p.product_id) + '\')">Pick colors</button></div>'
+      + '<details onclick="event.stopPropagation()"><summary>Sizes + price</summary>'
       + '<p><small>Sizes (tick to include):</small></p><div class="chips">' + sizeChips + '</div>'
-      + '<button class="secondary" onclick="saveVariants(\'' + esc(p.product_id) + '\')">Save colours + sizes</button>'
+      + '<button class="secondary" onclick="saveVariants(\'' + esc(p.product_id) + '\')">Save sizes</button>'
       + '<label>Default color</label><select id="defcol-' + sid + '" onchange="saveDefaultColor(\'' + esc(p.product_id) + '\')">' + defColOpts + '</select>'
       + '<label>Sale price</label><input id="sale-' + sid + '" inputmode="decimal" placeholder="e.g. 27.99" value="' + (p.sale_price === undefined || p.sale_price === null ? '' : esc(p.sale_price)) + '">'
       + '<label>Compare-at price (optional, must be higher than sale)</label><input id="cmp-' + sid + '" inputmode="decimal" placeholder="e.g. 34.99" value="' + (p.compare_at_price === undefined || p.compare_at_price === null ? '' : esc(p.compare_at_price)) + '">'
@@ -621,25 +834,100 @@ async function postSet(path, body) {
 function refreshAfterSet(j) {
   currentSet = j.set || j;
   syncCache(); updateCurrentSetLine(); renderSetList(); renderProducts();
+  fillDetails(); fillCampaignSettings();
   renderVariantCount(); renderPublishStatus(); renderDraftLine();
   renderCentreMockup(); renderArtworkSpec(); renderLayers();
   clearDirty();
+}
+async function refreshSelectedProduct() {
+  const p = selectedProduct();
+  if (!p) return alert('Open a set with a product first.');
+  try { const j = await postSet('/products/' + encodeURIComponent(p.product_id) + '/refresh', {}); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
+async function savePosition(pid, position) {
+  if (!currentSet) return;
+  try { const j = await postSet('/products/' + encodeURIComponent(pid) + '/position', { position: position }); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
+let pickPid = null;
+let pickColours = [];
+let pickAllColours = [];
+function openPickColors(pid) {
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  if (!p) return;
+  pickPid = pid;
+  pickAllColours = (p.all_colours && p.all_colours.length ? p.all_colours : p.colours || []).slice();
+  pickColours = (p.colours || []).slice();
+  document.getElementById('pickColorsTitle').textContent = 'Pick colors: ' + (p.title || pid);
+  document.getElementById('pickColorsResult').innerHTML = '';
+  renderPickColors();
+  document.getElementById('pickColorsModal').style.display = 'block';
+}
+function renderPickColors() {
+  const avail = document.getElementById('pickColorsAvailable');
+  avail.innerHTML = pickAllColours.map(function(c) {
+    const sel = pickColours.indexOf(c) !== -1;
+    return '<button class="' + (sel ? 'sel' : 'secondary') + '" onclick="togglePickColor(\'' + esc(c) + '\')">' + (sel ? '✓ ' : '') + esc(c) + '</button>';
+  }).join('');
+  const selBox = document.getElementById('pickColorsSelected');
+  if (!pickColours.length) { selBox.innerHTML = '<small>No colors selected yet.</small>'; }
+  else {
+    selBox.innerHTML = pickColours.map(function(c) {
+      return '<span class="chipX">' + esc(c) + '<button class="secondary" onclick="togglePickColor(\'' + esc(c) + '\')">x</button></span>';
+    }).join('');
+  }
+  const def = document.getElementById('pickColorsDefault');
+  const cur = currentSet.products.filter(function(x) { return x.product_id === pickPid; })[0];
+  const curDef = (cur && cur.default_color) || pickColours[0] || '';
+  def.innerHTML = pickColours.map(function(c) {
+    return '<option value="' + esc(c) + '"' + (c === curDef ? ' selected' : '') + '>' + esc(c) + '</option>';
+  }).join('');
+}
+function togglePickColor(c) {
+  const i = pickColours.indexOf(c);
+  if (i === -1) pickColours.push(c); else pickColours.splice(i, 1);
+  renderPickColors();
+}
+function pickColorsSelectAll() {
+  pickColours = pickAllColours.slice();
+  renderPickColors();
+}
+function closePickColors() {
+  document.getElementById('pickColorsModal').style.display = 'none';
+  pickPid = null;
+}
+async function savePickColors() {
+  if (!currentSet || !pickPid) return;
+  const def = document.getElementById('pickColorsDefault').value;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pickPid) + '/colors', { colours: pickColours, default_color: def });
+    refreshAfterSet(j);
+    closePickColors();
+  } catch (e) { document.getElementById('pickColorsResult').innerHTML = '<p class="warn">' + esc(e.message) + '</p>'; }
 }
 async function saveAll() {
   if (!currentSet) return alert('Create a set first.');
   const products = (currentSet.products || []).map(function(p) {
     const sid = safeId(p.product_id);
     const colours = [], sizes = [];
+    let colourBoxes = 0;
     document.querySelectorAll('input[data-prod="' + p.product_id + '"]').forEach(function(cb) {
+      if (cb.getAttribute('data-kind') === 'colour') colourBoxes++;
       if (!cb.checked) return;
       if (cb.getAttribute('data-kind') === 'colour') colours.push(cb.value); else sizes.push(cb.value);
     });
+    // Colours now live in the Pick colors modal and save immediately
+    // through the API, so when no colour checkboxes are on the page,
+    // keep the saved selection instead of wiping it to empty.
+    const finalColours = colourBoxes ? colours : (p.colours || []).slice();
     const saleEl = document.getElementById('sale-' + sid);
     const cmpEl = document.getElementById('cmp-' + sid);
     const costEl = document.getElementById('cost-' + sid);
     return {
       product_id: p.product_id,
-      colours: colours,
+      colours: finalColours,
       sizes: sizes,
       sale_price: saleEl ? saleEl.value.trim() : '',
       compare_at_price: cmpEl ? cmpEl.value.trim() : '',
@@ -663,8 +951,9 @@ async function saveAll() {
   } catch (e) { alert(e.message); }
 }
 function toggleSwatch(pid, colour) {
-  const cb = document.querySelector('input[data-prod="' + pid + '"][data-kind="colour"][value="' + colour + '"]');
-  if (cb) { cb.checked = !cb.checked; markDirty(); }
+  // Kept for old callers: colour selection now lives in the
+  // Pick colors modal, so a swatch tap opens that modal instead.
+  openPickColors(pid);
 }
 async function saveDefaultColor(pid) {
   if (!currentSet) return;
@@ -698,13 +987,12 @@ async function refreshProduct(pid) {
 }
 async function saveVariants(pid) {
   if (!currentSet) return alert('Create a set first.');
-  const colours = [], sizes = [];
+  const sizes = [];
   document.querySelectorAll('input[data-prod="' + pid + '"]').forEach(function(cb) {
-    if (!cb.checked) return;
-    if (cb.getAttribute('data-kind') === 'colour') colours.push(cb.value); else sizes.push(cb.value);
+    if (cb.checked && cb.getAttribute('data-kind') === 'size') sizes.push(cb.value);
   });
   try {
-    const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { colours: colours, sizes: sizes });
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { sizes: sizes });
     refreshAfterSet(j);
   } catch (e) { alert(e.message); }
 }
@@ -1141,7 +1429,7 @@ async function previewPublish() {
     const rows = (j.checklist || j.products).map(function(p) {
       const variants = p.variants && p.variants.length !== undefined ? p.variants.length : p.variants;
       const ready = p.ready !== undefined ? p.ready : true;
-      return '<div class="layerrow"><span>' + esc(p.title) + ' (' + variants + ' variants, profit ' + (p.profit === null || p.profit === undefined ? 'not set' : p.profit) + ')</span><span>' + (ready ? '<span class="ok">Ready</span>' : '<span class="warn">Not ready</span>') + '</span></div>';
+      return '<div class="layerrow"><span>' + esc(p.title) + ' (' + variants + ' variants)</span><span>' + (ready ? '<span class="ok">Ready</span>' : '<span class="warn">Not ready</span>') + '</span></div>';
     }).join('');
     const warns = (j.warnings || []).map(function(w) { return '<p><small class="warn">' + esc(w) + '</small></p>'; }).join('');
     box.innerHTML = '<p class="ok">Preview only, nothing created.</p>' + rows + warns + '<p><small>' + esc(j.note) + '</small></p>';

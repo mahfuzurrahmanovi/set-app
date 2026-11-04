@@ -724,8 +724,8 @@ function renderProducts() {
         + '<button class="secondary" onclick="saveProductPlacement(\'' + esc(p.product_id) + '\')">Save placement for this product</button></div>';
     }
     return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
-      + '<div style="display:flex;gap:10px;align-items:flex-start">' + productThumb(p)
-      + '<div style="flex:1;min-width:0"><b style="overflow-wrap:anywhere">' + title + '</b>' + badge
+      + '<div class="prodcard-header">' + productThumb(p)
+      + '<div class="prodtitle"><b>' + title + '</b>' + badge
       + '<br>' + priceLine
       + '<br><small>Default color: ' + defaultColor + ' | ' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + '</small>'
       + '<div class="swatches">' + swatches + '</div>' + positionRadios + '</div>'
@@ -1499,12 +1499,20 @@ async function addAllCatalogTemplates() {
     refreshAfterSet(j.set);
   } catch (e) { alert(e.message); }
 }
-function setGrouping(g) {
+async function setGrouping(g) {
   if (!currentSet) return alert('Create a set first.');
   currentSet.grouping = g;
   const a = document.getElementById('groupCombine'); if (a) a.style.outline = g === 'combine' ? '3px solid #0f766e' : '';
   const b = document.getElementById('groupSplit'); if (b) b.style.outline = g === 'split' ? '3px solid #0f766e' : '';
   const c = document.getElementById('groupGrouped'); if (c) c.style.outline = g === 'grouped' ? '3px solid #0f766e' : '';
+  // Part 7 fix: save grouping to the server at once, no Save tap
+  // needed, then refresh the variant count so the warning shown
+  // always matches the grouping just tapped.
+  try {
+    const j = await postSet('/details', { grouping: g });
+    if (j && j.grouping) currentSet.grouping = j.grouping;
+  } catch (e) { alert(e.message); }
+  renderVariantCount();
 }
 async function saveDetails() {
   if (!currentSet) return alert('Create a set first.');

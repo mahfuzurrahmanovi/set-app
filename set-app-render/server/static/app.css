@@ -32,6 +32,13 @@
   .placebox:active { cursor: grabbing; }
   .prodcard { border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px; margin-top: 12px; }
   .prodcard.selected { outline: 3px solid #0f766e; }
+  /* Product card header (Part 7 fix): thumb never shrinks, title
+     flexes and wraps on whole words, Remove button never squeezes
+     it: width:auto, nowrap, shrink-proof, not the global 100%. */
+  .prodcard-header { display: flex; gap: 10px; align-items: flex-start; }
+  .prodcard-header .thumb { flex-shrink: 0; }
+  .prodcard-header .prodtitle { flex: 1; min-width: 0; overflow-wrap: break-word; }
+  .prodcard-header button { flex-shrink: 0; width: auto; white-space: nowrap; margin-top: 0; }
   .prodcard .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #eee; }
   .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .swatch { width: 24px; height: 24px; border-radius: 6px; border: 1px solid #ccc; display: inline-block; }
@@ -75,6 +82,8 @@ table.campaigns a { color: #0f766e; }
   .tabs button { padding: 8px; }
   .row { flex-wrap: wrap; }
   .prodcard .thumb { width: 56px; height: 56px; }
+  .prodcard-header { flex-wrap: wrap; }
+  .prodcard-header button { margin-top: 8px; }
   #pickColorsModal { padding: 8px; }
   img { max-width: 100%; }
 }

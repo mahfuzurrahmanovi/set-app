@@ -96,8 +96,9 @@ def main():
         print("== 2. Set details ==")
         r = client.post("/api/sets", json={"name": "Test Set"})
         sid = r.get_json()["id"]
+        # Part 7 (Ovi 2026-11-04 22:08): new sets default to grouped.
         check("new set defaults",
-              r.get_json()["grouping"] == "combine"
+              r.get_json()["grouping"] == "grouped"
               and r.get_json()["publish_state"] == "draft")
         r = client.post(f"/api/sets/{sid}/details",
                         json={"name": "x" * 256})

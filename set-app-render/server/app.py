@@ -449,19 +449,12 @@ def variant_summary(set_obj):
             total += n
     grouping = set_obj.get("grouping", "combine")
     if grouping == "grouped":
-        import math
-        chunks = math.ceil(total / 95) if total else 0
         return {
             "grouping": grouping,
             "per_product": per_product,
             "total_combine": total,
             "guard_ok": True,
-            "message": (
-                "Grouped mode: %d variants across %d listings "
-                "(95 or fewer each, Shopify allows 100 per product). "
-                "One campaign link in the app; publish splits them "
-                "automatically." % (total, chunks)
-            ),
+            "message": "Grouped: %d variants, one campaign link." % total,
         }
     if grouping == "combine":
         guard_ok = total <= 100
@@ -975,7 +968,7 @@ def create_campaign():
         "tags": tags,
         "slug": slug,
         "campaign": campaign_defaults(),
-        "grouping": "combine",
+        "grouping": "grouped",
         "publish_state": "draft",
         "publish_error": None,
         "artwork_locked": False,
@@ -1134,7 +1127,7 @@ def create_set():
         "tags": [],
         "slug": "",
         "campaign": campaign_defaults(),
-        "grouping": "combine",
+        "grouping": "grouped",
         "publish_state": "draft",
         "publish_error": None,
         "artwork_locked": False,

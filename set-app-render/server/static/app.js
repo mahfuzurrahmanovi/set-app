@@ -334,7 +334,13 @@ function fillCampaignSettings() {
   document.getElementById('campUrlPreview').textContent = 'fansfit.shop/' + (currentSet.slug || '');
   bindSlugAuto();
 }
-async function saveCampaignSettings() {
+async function saveAndGoDesigner() {
+  // Designer button on settings: save first, navigate only on success.
+  // A failed save stays on settings and shows the error, no navigation.
+  await saveCampaignSettings({ goDesigner: true });
+}
+async function saveCampaignSettings(opts) {
+  const goDesigner = !!(opts && opts.goDesigner);
   if (!currentSet) return alert('Open a campaign first.');
   if (!document.getElementById('campDesc')) return alert('Campaign settings are on the settings page.');
   const nameEl = document.getElementById('campName') || document.getElementById('detailName');
@@ -364,8 +370,10 @@ async function saveCampaignSettings() {
     currentSet.description = j.description;
     currentSet.campaign = j.campaign;
     syncCache(); updateCurrentSetLine(); renderSetList(); fillDetails(); fillCampaignSettings(); clearDirty();
+    if (goDesigner) { window.location.href = '/campaigns/' + currentSet.id + '/designer'; return true; }
     document.getElementById('campaignSettingsResult').innerHTML = '<p class="ok">Campaign settings saved.</p>';
-  } catch (e) { alert(e.message); }
+    return true;
+  } catch (e) { alert(e.message); return false; }
 }
 function useHowToOrder() {
   const d = document.getElementById('campDesc');
@@ -1151,12 +1159,38 @@ function setViewSide(side) {
   document.getElementById('backNote').style.display = side === 'back' ? 'block' : 'none';
   renderCentreMockup();
 }
+
+function designAreaTemplateUrl(title, side) {
+  // Printify design-page style: flat outline, dashed print area, no
+  // model, no photo, no pre-printed design. This is the designer base
+  // Ovi asked for (2026-11-04), not a Shopify rendered photo.
+  if (!title) return '';
+  const s = String(title).toLowerCase();
+  if (side === 'back') {
+    if (s.indexOf('hoodie') === -1 && s.indexOf('crewneck') === -1 &&
+        s.indexOf('long sleeve') === -1 && s.indexOf('v-neck') === -1 &&
+        s.indexOf('v neck') === -1) return '/static/design-area-templates/shortsleeve-back.png';
+    return '';
+  }
+  if (s.indexOf('hoodie') !== -1) return '/static/design-area-templates/hoodie-front.png';
+  if (s.indexOf('crewneck') !== -1) return '/static/design-area-templates/crewneck-front.png';
+  if (s.indexOf('v-neck') !== -1 || s.indexOf('v neck') !== -1) return '/static/design-area-templates/vneck-front.png';
+  if (s.indexOf('long sleeve') !== -1) return '/static/design-area-templates/longsleeve-front.png';
+  return '/static/design-area-templates/shortsleeve-front.png';
+}
 function centreImageUrl(p) {
   // Gearlaunch-style base: a flat Printify product photo when a
   // template matches this product type, otherwise the BARE store
   // photo. Never a rendered mockup: one already has a design
   // printed on it, so using it stacks a new design on the old one.
   if (!p) return '';
+  const designArea = designAreaTemplateUrl(p.title, viewSide);
+  if (designArea) {
+    p._designArea = true;
+    p._flatTemplate = { title: p.title, brand: 'Printify design-page' };
+    return designArea;
+  }
+  p._designArea = false;
   if (p.kind === 'catalog' && p.images && p.images[0]) {
     p._flatTemplate = { title: p.title };
     p._printifyExact = true;
@@ -1184,6 +1218,7 @@ function centreImageUrl(p) {
 }
 function mockupSourceLabel(p) {
   if (!p) return '';
+  if (p._designArea) return 'Printify design-page template (flat outline, dashed print area)';
   if (catalogTemplates === null) return 'Loading flat photo…';
   if (p._printifyExact) return 'Printify photo (exact product photo)';
   if (p._flatTemplate) return 'Printify flat product photo' + (p._flatTemplate.brand ? ' (' + esc(p._flatTemplate.brand) + ')' : '');
@@ -1264,33 +1299,7 @@ function positionPlaceBox() {
   box.style.transform = 'none';
   const pl = clampPlacement(effectivePlacementOf(p));
   const cx = pl.x, cy = pl.y, scale = pl.scale;
-  // Visible text layers, each at its own position inside the box.
-  // Layer x/y are full-mockup fractions (null = placement centre);
-  // map them into the box, apply size, font, rotation and opacity.
-  // Layers are independent of the design-hide flag, so they render
-  // even when the design itself is hidden.
-  const oldLayers = box.querySelectorAll('.centreLayer');
-  oldLayers.forEach(function(el) { el.remove(); });
-  if (currentSet) {
-    const hiddenHere = (p && p.hidden_layers) || [];
-    (currentSet.text_layers || []).filter(function(l) { return !l.hidden && hiddenHere.indexOf(l.id) === -1; }).forEach(function(l) {
-      const lx = (l.x === undefined || l.x === null) ? cx : Math.min(PRINT_AREA.left + PRINT_AREA.width, Math.max(PRINT_AREA.left, +l.x));
-      const ly = (l.y === undefined || l.y === null) ? cy : Math.min(PRINT_AREA.top + PRINT_AREA.height, Math.max(PRINT_AREA.top, +l.y));
-      const span = document.createElement('div');
-      span.className = 'centreLayer';
-      span.textContent = l.content || '';
-      span.style.position = 'absolute';
-      span.style.left = (((lx - PRINT_AREA.left) / PRINT_AREA.width) * 100) + '%';
-      span.style.top = (((ly - PRINT_AREA.top) / PRINT_AREA.height) * 100) + '%';
-      span.style.transform = 'translate(-50%, -50%) rotate(' + (l.rotation || 0) + 'deg)';
-      span.style.color = l.colour || '#111111';
-      span.style.fontFamily = l.font === 'serif' ? 'serif' : (l.font === 'mono' ? 'monospace' : 'sans-serif');
-      span.style.fontSize = Math.max(10, Math.round((l.size || 120) * 0.25)) + 'px';
-      span.style.opacity = (l.opacity === undefined ? 1 : (l.opacity > 1 ? l.opacity / 100 : l.opacity));
-      span.style.pointerEvents = 'none';
-      box.appendChild(span);
-    });
-  }
+  // Text layers removed (Ovi 2026-11-04): only the design renders.
   if (!currentSet || !currentSet.design_url || (p.hide_design)) {
     const oldDesign = document.getElementById('designImg');
     if (oldDesign) oldDesign.remove();
@@ -1329,23 +1338,11 @@ function renderLayers() {
   const box = document.getElementById('layersList');
   if (!box) return;
   if (!currentSet) { box.innerHTML = '<small>Open a set to see layers.</small>'; return; }
-  const rows = [];
   const sel = selectedProduct();
-  rows.push('<div class="layerrow"><span><b>Design</b><small> (whole set)</small>' + (currentSet.design_url ? '' : ' <small>none uploaded</small>') + '</span>'
+  box.innerHTML = '<div class="layerrow"><span><b>Design</b><small> (whole set)</small>' + (currentSet.design_url ? '' : ' <small>none uploaded</small>') + '</span>'
     + (sel ? '<button class="secondary" onclick="toggleDesignHide(\'' + esc(sel.product_id) + '\')">' + (sel.hide_design ? 'Show on this product' : 'Hide on this product') + '</button>' : '')
-    + '<button class="danger" onclick="removeDesign()">Remove design</button></div>');
-  (currentSet.text_layers || []).forEach(function(l, idx) {
-    const eye = l.hidden ? 'Show' : 'Hide';
-    const pos = (l.x !== undefined && l.y !== undefined) ? ' @ ' + (+l.x).toFixed(2) + ', ' + (+l.y).toFixed(2) : ' (centred on placement)';
-    rows.push('<div class="layerrow"><span><b>Text:</b> ' + esc(l.content) + ' <small>(' + esc(l.font) + ', ' + l.size + 'px, ' + esc(l.colour) + pos + (l.hidden ? ', hidden' : '') + ')</small></span>'
-      + '<button class="secondary" onclick="toggleLayerEye(\'' + esc(l.id) + '\')">' + eye + '</button>'
-      + '<button class="secondary" onclick="editLayer(\'' + esc(l.id) + '\')">Edit</button>'
-      + '<button class="secondary" onclick="moveLayer(\'' + esc(l.id) + '\', -1)">Up</button>'
-      + '<button class="secondary" onclick="moveLayer(\'' + esc(l.id) + '\', 1)">Down</button>'
-      + (sel ? '<button class="secondary" onclick="hideLayerOnProduct(\'' + esc(sel.product_id) + '\', \'' + esc(l.id) + '\')">This product</button>' : '')
-      + '<button class="danger" onclick="deleteLayer(\'' + esc(l.id) + '\')">All products</button></div>');
-  });
-  box.innerHTML = rows.join('');
+    + '<button class="danger" onclick="removeDesign()">Remove design</button></div>'
+    + '<p><small>Text layers were removed. One design across the whole set.</small></p>';
 }
 function editLayer(lid) {
   const l = (currentSet.text_layers || []).filter(function(x) { return x.id === lid; })[0];
@@ -1507,6 +1504,7 @@ function setGrouping(g) {
   currentSet.grouping = g;
   const a = document.getElementById('groupCombine'); if (a) a.style.outline = g === 'combine' ? '3px solid #0f766e' : '';
   const b = document.getElementById('groupSplit'); if (b) b.style.outline = g === 'split' ? '3px solid #0f766e' : '';
+  const c = document.getElementById('groupGrouped'); if (c) c.style.outline = g === 'grouped' ? '3px solid #0f766e' : '';
 }
 async function saveDetails() {
   if (!currentSet) return alert('Create a set first.');

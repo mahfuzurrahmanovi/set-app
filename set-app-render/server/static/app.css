@@ -60,3 +60,21 @@ table.campaigns .thumb { width: 56px; height: 56px; object-fit: cover; border-ra
 table.campaigns a { color: #0f766e; }
 .nav { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .nav a { color: #0f766e; font-weight: 600; }
+
+/* Phone layout (Ovi 2026-11-04): 360-430px, compact nav, no overflow. */
+@media (max-width: 480px) {
+  body { padding: 8px; overflow-x: hidden; }
+  h1 { font-size: 19px; } h2 { font-size: 16px; }
+  .card { padding: 10px; }
+  .nav { gap: 6px; }
+  .nav a, .nav button { font-size: 15px; padding: 8px 10px; }
+  .nav button { width: auto; margin-top: 0; }
+  input, button, select, textarea { font-size: 16px; padding: 10px; }
+  .editor { gap: 8px; }
+  .mockupWrap { min-height: 140px; }
+  .tabs button { padding: 8px; }
+  .row { flex-wrap: wrap; }
+  .prodcard .thumb { width: 56px; height: 56px; }
+  #pickColorsModal { padding: 8px; }
+  img { max-width: 100%; }
+}

@@ -63,23 +63,7 @@
     <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
     <p id="artworkSpec"><small>No design uploaded yet.</small></p>
     <p><small>Design rule: transparent PNG only, no background. 150 DPI minimum for sharp prints (estimate at a 12 inch print width).</small></p>
-    <h2>Layers</h2>
-    <p><small>One design across the whole set, plus text layers. Eye hides a layer. "This product" hides it on the selected product only. "All products" deletes a text layer everywhere.</small></p>
-    <div id="layersList"><small>Open a set to see layers.</small></div>
-    <details id="layerFormDetails"><summary>Add a text layer</summary>
-      <label>Text</label><input id="layerText" placeholder="e.g. GO DUCKS">
-      <label>Font</label><select id="layerFont"><option value="sans">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option></select>
-      <label>Size (pixels)</label><input id="layerSize" inputmode="numeric" value="120">
-      <label>Colour</label><input type="color" id="layerColour" value="#111111">
-      <label>Lettercase</label><select id="layerCase"><option value="none">As typed</option><option value="upper">UPPERCASE</option><option value="lower">lowercase</option></select>
-      <label>Rotation (degrees, -180 to 180)</label><input id="layerRotation" inputmode="decimal" value="0">
-      <label>Opacity (0 to 100%)</label><input type="range" id="layerOpacity" min="0" max="100" value="100">
-      <label>Left / right <span id="layerXVal">0.50</span></label><input type="range" id="layerX" min="0" max="1" step="0.01" value="0.5" oninput="document.getElementById('layerXVal').textContent=(+this.value).toFixed(2)">
-      <label>Up / down <span id="layerYVal">0.47</span></label><input type="range" id="layerY" min="0" max="1" step="0.01" value="0.47" oninput="document.getElementById('layerYVal').textContent=(+this.value).toFixed(2)">
-      <button class="secondary" id="layerSubmitBtn" onclick="addTextLayer()">Add text layer</button>
-      <button class="secondary" id="layerCancelBtn" style="display:none" onclick="cancelLayerEdit()">Cancel edit</button>
-      <div id="layerResult"></div>
-    </details>
+    <p><small>One design across the whole set. Text layers were removed.</small></p>
   </div>
 
   <div class="card">
@@ -154,7 +138,7 @@
   <p id="draftLine"><small>Open a set to start.</small></p>
   <p id="dirtyNote" style="display:none"><span class="warn">Unsaved changes</span></p>
   <div id="publishStatus"></div>
-  <label>Grouping</label><div class="row"><button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button><button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button></div><button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
+  <label>Grouping</label><div class="row"><button class="secondary" id="groupCombine" onclick="setGrouping('combine')">Combine into one listing</button><button class="secondary" id="groupSplit" onclick="setGrouping('split')">Split, one per product</button><button class="secondary" id="groupGrouped" onclick="setGrouping('grouped')">Grouped: one link, many listings (up to ~500 variants)</button></div><p><small>Grouped keeps one campaign link in the app and splits variants across listings of 95 or fewer at publish, because Shopify allows 100 variants per product.</small></p><button class="secondary" onclick="previewPublish()">Preview what will be published (no changes)</button>
   <button class="secondary" onclick="saveAll()">Save</button>
   <button onclick="publishLive()">Publish to Shopify (live)</button>
   <button class="secondary" onclick="downloadSetJson()">Download set JSON</button>
@@ -173,11 +157,9 @@ loadSetById('{{ view.id }}').then(function() {
   setVal('y', (mp.y === undefined ? 0.45 : mp.y));
   setVal('s', (mp.scale === undefined ? 0.5 : mp.scale));
   setVal('angle', (mp.angle === undefined ? 0 : mp.angle));
-  setVal('layerX', (mp.x === undefined ? 0.5 : mp.x));
-  setVal('layerY', (mp.y === undefined ? 0.47 : mp.y));
   showVals(); clearDirty(); updateCurrentSetLine(); renderProducts();
   fillCampaignSettings(); renderVariantCount(); renderPublishStatus(); renderDraftLine();
-  renderCentreMockup(); renderArtworkSpec(); renderLayers(); loadCatalogTemplates();
+  renderCentreMockup(); renderArtworkSpec(); loadCatalogTemplates();
 }).catch(function(e) { alert(e.message); });
 </script>
 </body>

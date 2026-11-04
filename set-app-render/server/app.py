@@ -448,6 +448,21 @@ def variant_summary(set_obj):
         else:
             total += n
     grouping = set_obj.get("grouping", "combine")
+    if grouping == "grouped":
+        import math
+        chunks = math.ceil(total / 95) if total else 0
+        return {
+            "grouping": grouping,
+            "per_product": per_product,
+            "total_combine": total,
+            "guard_ok": True,
+            "message": (
+                "Grouped mode: %d variants across %d listings "
+                "(95 or fewer each, Shopify allows 100 per product). "
+                "One campaign link in the app; publish splits them "
+                "automatically." % (total, chunks)
+            ),
+        }
     if grouping == "combine":
         guard_ok = total <= 100
         message = (
@@ -619,6 +634,59 @@ def build_product_payloads(set_obj):
         for p in set_obj.get("products", []):
             title = p.get("title") or p["product_id"]
             payloads.append(product_payload(title, p))
+        return payloads
+    if grouping == "grouped":
+        # Grouped (Ovi 2026-11-04): one campaign link in the app, but
+        # Shopify cannot hold 500 variants in one product (100 cap).
+        # Build the full combined variant list, then chunk it into
+        # listings of 95 or fewer, titled Set, Set (2), Set (3), ...
+        # Each chunk keeps only the Style/Color/Size values it uses,
+        # and every variant maps to exactly one chunk, so the
+        # storefront picker can map a choice to the correct listing.
+        all_variants = []
+        for p in set_obj.get("products", []):
+            style = p.get("title") or p["product_id"]
+            compare = parse_money_decimal(p.get("compare_at_price"))
+            for colour in p.get("colours") or []:
+                for size in p.get("sizes") or []:
+                    price = variant_price_for_pair(p, colour, size)
+                    if price is None:
+                        continue
+                    all_variants.append(variant_row(
+                        colour, size, price, compare, style=style))
+        images = []
+        for p in set_obj.get("products", []):
+            for url in product_images(p):
+                if url not in images:
+                    images.append(url)
+        payloads = []
+        base_title = set_obj.get("name", "Untitled set")
+        for ci in range(0, len(all_variants), 95):
+            chunk = all_variants[ci:ci + 95]
+            styles = []
+            colours = []
+            sizes = []
+            for v in chunk:
+                if v["option1"] not in styles:
+                    styles.append(v["option1"])
+                if v["option2"] not in colours:
+                    colours.append(v["option2"])
+                if v["option3"] not in sizes:
+                    sizes.append(v["option3"])
+            title = base_title if ci == 0 else "%s (%d)" % (
+                base_title, ci // 95 + 1)
+            payloads.append({
+                "title": title,
+                "description": description,
+                "tags": tags,
+                "options": [
+                    {"name": "Style", "values": styles},
+                    {"name": "Color", "values": colours},
+                    {"name": "Size", "values": sizes},
+                ],
+                "variants": chunk,
+                "images": images,
+            })
         return payloads
     # Combine: one listing. A Style option keeps each member's variants
     # distinct even when colours/sizes overlap (tee Black/S and hoodie
@@ -1428,7 +1496,7 @@ def set_details(sid):
             tags = [str(t).strip() for t in raw_tags if str(t).strip()]
         s["tags"] = tags
     if "grouping" in body:
-        if body["grouping"] not in ("combine", "split"):
+        if body["grouping"] not in ("combine", "split", "grouped"):
             return jsonify({"error": "grouping must be combine or split"}), 400
         s["grouping"] = body["grouping"]
     s["draft_saved_at"] = now_iso()
@@ -1509,9 +1577,9 @@ def save_all(sid):
                 "error": "URL slug may only use lowercase letters, numbers "
                          "and hyphens, e.g. oregon-ducks-set."
             }), 400
-    if "grouping" in details and details["grouping"] not in ("combine", "split"):
+    if "grouping" in details and details["grouping"] not in ("combine", "split", "grouped"):
         return jsonify({"error": "grouping must be combine or split"}), 400
-    if "grouping" in body and body["grouping"] not in ("combine", "split"):
+    if "grouping" in body and body["grouping"] not in ("combine", "split", "grouped"):
         return jsonify({"error": "grouping must be combine or split"}), 400
     product_updates = {}
     for entry in body.get("products") or []:

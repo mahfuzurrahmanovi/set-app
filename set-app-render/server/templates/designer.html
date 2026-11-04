@@ -55,6 +55,9 @@
     </div>
     <p id="mockupSource"><small>Printify flat product photo</small></p>
     <p><small>The dashed box is the fixed print area. It never moves. Tap inside it or drag the design to move only the design, inside the print area.</small></p>
+    <label>Design size <span id="designSizeVal">100%</span> <span id="designSizeApplies"></span></label>
+    <input type="range" id="designSize" min="0.1" max="0.5" step="0.01" value="0.5" oninput="onDesignSizeInput(event)">
+    <p><small>Drag this slider to scale the design inside the fixed print area. 0.5 fills the box, 0.1 is small. You see the new size at once, no Save needed to preview it. Save below persists it.</small></p>
     <button class="secondary" onclick="previewAllMockups()">Preview all mockups</button>
     <div id="previewAllResult"></div>
     <p id="backNote" style="display:none"><small>Back side is not printed in this app yet. FRONT is the working side. The placement box edits the front only.</small></p>
@@ -109,7 +112,7 @@
   <label>Up / down <span id="yVal">0.45</span></label>
   <input type="range" id="y" min="0" max="1" step="0.01" value="0.45" oninput="showVals()">
   <label>Size <span id="sVal">0.50</span></label>
-  <input type="range" id="s" min="0.1" max="1" step="0.01" value="0.5" oninput="showVals()">
+  <input type="range" id="s" min="0.1" max="0.5" step="0.01" value="0.5" oninput="showVals()">
   <label>Angle <span id="angleVal">0</span></label>
   <input type="range" id="angle" min="-180" max="180" step="1" value="0" oninput="showVals()">
   <div class="row">

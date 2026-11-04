@@ -62,6 +62,13 @@ function bindSlugAuto() {
 function flatTemplateForTitle(title) {
   if (!title || !catalogTemplates) return null;
   const t = String(title).toLowerCase();
+  // Classic first, before v-neck: a "Classic Long Sleeve" title must
+  // not fall through to the Ultra Cotton template, which is a
+  // different product. (No real title is both, but the order must
+  // match the plan, not contradict it.)
+  if (t.indexOf('classic') !== -1 && t.indexOf('long sleeve') !== -1) {
+    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('classic long sleeve') !== -1; })[0] || null;
+  }
   if (t.indexOf('v-neck') !== -1 || t.indexOf('v neck') !== -1) {
     return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('v-neck') !== -1; })[0] || null;
   }
@@ -70,6 +77,19 @@ function flatTemplateForTitle(title) {
       || catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('long sleeve') !== -1; })[0] || null;
   }
   return null;
+}
+function printifyImageOf(p) {
+  // Exact Printify photo already on file for this store product, if
+  // any. Never invented: only a stored URL containing
+  // images.printify.com counts.
+  if (!p) return '';
+  const urls = [];
+  if (p.image) urls.push(p.image);
+  (p.images || []).forEach(function(u) { urls.push(u); });
+  for (let i = 0; i < urls.length; i++) {
+    if (urls[i] && urls[i].indexOf('images.printify.com') !== -1) return urls[i];
+  }
+  return '';
 }
 let viewSide = 'front';
 let lastSearchResults = [];
@@ -452,13 +472,100 @@ function selectSet(id) {
   renderLayers();
   const ps = document.getElementById('productSearch'); if (ps && ps.value.trim().length >= 2) searchProducts();
 }
+function designSizeAppliesText() {
+  const sel = selectedProduct();
+  if (!sel) return '';
+  return sel.locked ? 'Locked: follows master' : 'Unlocked: this product only';
+}
+function syncDesignSize() {
+  const el = document.getElementById('designSize');
+  if (!el) return;
+  const sel = selectedProduct();
+  const pl = clampPlacement(effectivePlacementOf(sel));
+  if (document.activeElement !== el) el.value = pl.scale.toFixed(2);
+  const val = document.getElementById('designSizeVal');
+  if (val) val.textContent = Math.round((pl.scale / PRINT_AREA.width) * 100) + '% of print area';
+  const ap = document.getElementById('designSizeApplies');
+  if (ap) ap.textContent = designSizeAppliesText();
+  // Review blockers B1/B2: the master slider #s must ONLY follow the
+  // master placement. Syncing it from an unlocked override corrupted
+  // the master on the next Save (B2). For an unlocked product, sync
+  // the per-product sliders instead, so "Save placement for this
+  // product" POSTs the Design-size value rather than a stale one (B1).
+  if (sel && !sel.locked) {
+    const sid = safeId(sel.product_id);
+    const syncOne = function(id, v) {
+      const e = document.getElementById(id);
+      if (e && document.activeElement !== e) e.value = v;
+    };
+    syncOne('px-' + sid, pl.x.toFixed(2));
+    syncOne('py-' + sid, pl.y.toFixed(2));
+    syncOne('ps-' + sid, pl.scale.toFixed(2));
+    syncOne('pa-' + sid, (pl.angle || 0).toFixed(0));
+  } else {
+    const sEl = document.getElementById('s');
+    if (sEl && document.activeElement !== sEl) sEl.value = pl.scale.toFixed(2);
+  }
+}
+function setDesignSize(scale) {
+  if (!currentSet) return;
+  const clamped = clampPlacement({ scale: scale });
+  const sel = selectedProduct();
+  if (sel && !sel.locked) {
+    const base = clampPlacement(effectivePlacementOf(sel));
+    sel.override_placement = { x: base.x, y: base.y, scale: clamped.scale, angle: base.angle };
+  } else {
+    currentSet.master_placement = currentSet.master_placement || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
+    currentSet.master_placement.scale = clamped.scale;
+  }
+  markDirty();
+  syncDesignSize();
+  positionPlaceBox();
+}
+function onDesignSizeInput(ev) {
+  setDesignSize(+ev.target.value);
+}
+function liveProductPlacement(pid) {
+  // Per-product sliders live-update the preview too (previously they
+  // only took effect on Save, and only for unlocked products).
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  if (!p || p.locked) return;
+  const sid = safeId(pid);
+  const get = function(id) { const e = document.getElementById(id); return e ? +e.value : undefined; };
+  const pl = clampPlacement({
+    x: get('px-' + sid), y: get('py-' + sid),
+    scale: get('ps-' + sid), angle: get('pa-' + sid)
+  });
+  p.override_placement = pl;
+  markDirty();
+  syncDesignSize();
+  positionPlaceBox();
+}
 function showVals() {
   const setTxt = function(id, el, fmt) { const t = document.getElementById(id); const e = document.getElementById(el); if (t && e) t.textContent = fmt(+e.value); };
   setTxt('xVal', 'x', function(v) { return v.toFixed(2); });
   setTxt('yVal', 'y', function(v) { return v.toFixed(2); });
   setTxt('sVal', 's', function(v) { return v.toFixed(2); });
   setTxt('angleVal', 'angle', function(v) { return v.toFixed(0); });
+  // Master sliders live-preview: write their values into the in-memory
+  // master placement so positionPlaceBox reflects them at once, without
+  // waiting for Save. Save still persists them via saveMaster/saveAll.
+  // Unlocked products are unaffected here: their preview uses the
+  // override, not the master, and the Design size slider shows that.
+  if (currentSet) {
+    const xv = document.getElementById('x'); const yv = document.getElementById('y');
+    const sv = document.getElementById('s'); const av = document.getElementById('angle');
+    if (xv || yv || sv || av) {
+      const mp = currentSet.master_placement || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
+      currentSet.master_placement = clampPlacement({
+        x: xv ? +xv.value : mp.x, y: yv ? +yv.value : mp.y,
+        scale: sv ? +sv.value : mp.scale, angle: av ? +av.value : mp.angle
+      });
+    }
+  }
   positionPlaceBox();
+  syncDesignSize();
 }
 async function createSet() {
   const nameEl = document.getElementById('setName');
@@ -602,10 +709,10 @@ function renderProducts() {
     if (!p.locked) {
       const pl = p.override_placement || effectivePlacementOf(p);
       placementBlock = '<div onclick="event.stopPropagation()"><h3>This product\'s placement</h3>'
-        + '<label>Left / right</label><input type="range" id="px-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.x === undefined ? 0.5 : pl.x) + '">'
-        + '<label>Up / down</label><input type="range" id="py-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.y === undefined ? 0.45 : pl.y) + '">'
-        + '<label>Size</label><input type="range" id="ps-' + sid + '" min="0.1" max="1" step="0.01" value="' + (pl.scale === undefined ? 0.5 : pl.scale) + '">'
-        + '<label>Angle</label><input type="range" id="pa-' + sid + '" min="-180" max="180" step="1" value="' + (pl.angle === undefined ? 0 : pl.angle) + '">'
+        + '<label>Left / right</label><input type="range" id="px-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.x === undefined ? 0.5 : pl.x) + '" oninput="liveProductPlacement(\'' + esc(p.product_id) + '\')">'
+        + '<label>Up / down</label><input type="range" id="py-' + sid + '" min="0" max="1" step="0.01" value="' + (pl.y === undefined ? 0.45 : pl.y) + '" oninput="liveProductPlacement(\'' + esc(p.product_id) + '\')">'
+        + '<label>Size</label><input type="range" id="ps-' + sid + '" min="0.1" max="0.5" step="0.01" value="' + (pl.scale === undefined ? 0.5 : pl.scale) + '" oninput="liveProductPlacement(\'' + esc(p.product_id) + '\')">'
+        + '<label>Angle</label><input type="range" id="pa-' + sid + '" min="-180" max="180" step="1" value="' + (pl.angle === undefined ? 0 : pl.angle) + '" oninput="liveProductPlacement(\'' + esc(p.product_id) + '\')">'
         + '<button class="secondary" onclick="saveProductPlacement(\'' + esc(p.product_id) + '\')">Save placement for this product</button></div>';
     }
     return '<div class="prodcard' + (isSel ? ' selected' : '') + '" onclick="selectProduct(\'' + esc(p.product_id) + '\')">'
@@ -614,8 +721,9 @@ function renderProducts() {
       + '<br>' + priceLine
       + '<br><small>Default color: ' + defaultColor + ' | ' + (p.locked ? 'Locked' : 'Unlocked') + ' | Variants: ' + (vc === null ? 'not set' : vc) + '</small>'
       + '<div class="swatches">' + swatches + '</div>' + positionRadios + '</div>'
-      + '<button class="secondary iconbtn" title="Remove from set" onclick="event.stopPropagation();removeProduct(\'' + esc(p.product_id) + '\')">X</button></div>'
+      + '<button class="secondary" onclick="event.stopPropagation();removeProduct(\'' + esc(p.product_id) + '\')">Remove product</button></div>'
       + staleNote
+      + '<div class="row" onclick="event.stopPropagation()"><button class="secondary" onclick="selectAllColours(\'' + esc(p.product_id) + '\')">Colours: Select all</button><button class="secondary" onclick="clearColours(\'' + esc(p.product_id) + '\')">Colours: Clear</button><button class="secondary" onclick="selectAllSizes(\'' + esc(p.product_id) + '\')">Sizes: Select all</button><button class="secondary" onclick="clearSizes(\'' + esc(p.product_id) + '\')">Sizes: Clear</button></div>'
       + '<div class="row" onclick="event.stopPropagation()"><button class="secondary" onclick="toggleLock(\'' + esc(p.product_id) + '\', ' + p.locked + ')">' + action + '</button>'
       + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button></div>'
       + '<div id="preview-' + sid + '"></div>'
@@ -812,6 +920,32 @@ async function saveVariants(pid) {
     refreshAfterSet(j);
   } catch (e) { alert(e.message); }
 }
+async function selectAllColours(pid) {
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  if (!p) return;
+  const all = (p.all_colours && p.all_colours.length ? p.all_colours : p.colours || []).slice();
+  try { const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { colours: all }); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
+async function clearColours(pid) {
+  if (!currentSet) return;
+  try { const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { colours: [] }); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
+async function selectAllSizes(pid) {
+  if (!currentSet) return;
+  const p = currentSet.products.filter(function(x) { return x.product_id === pid; })[0];
+  if (!p) return;
+  const all = (p.all_sizes && p.all_sizes.length ? p.all_sizes : p.sizes || []).slice();
+  try { const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { sizes: all }); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
+async function clearSizes(pid) {
+  if (!currentSet) return;
+  try { const j = await postSet('/products/' + encodeURIComponent(pid) + '/variants', { sizes: [] }); refreshAfterSet(j); }
+  catch (e) { alert(e.message); }
+}
 async function savePricing(pid) {
   if (!currentSet) return alert('Create a set first.');
   const sid = safeId(pid);
@@ -925,9 +1059,13 @@ function placeAt(clientX, clientY) {
   // moves that product's override placement, never the master:
   // writing to the master while an override is displayed silently
   // moved every locked product while the centre appeared unchanged.
+  // A tap/drag must never reset the size: preserve the current scale
+  // and angle (previously this forced scale 0.5, undoing any shrink).
+  const sel0 = selectedProduct();
+  const base0 = clampPlacement(effectivePlacementOf(sel0));
   const clamped = clampPlacement({ x: (clientX - rect.left) / rect.width,
                                    y: (clientY - rect.top) / rect.height,
-                                   scale: 0.5, angle: 0 });
+                                   scale: base0.scale, angle: base0.angle });
   const x = clamped.x, y = clamped.y;
   const sel = selectedProduct();
   if (currentSet && sel && !sel.locked) {
@@ -1021,8 +1159,19 @@ function centreImageUrl(p) {
   if (!p) return '';
   if (p.kind === 'catalog' && p.images && p.images[0]) {
     p._flatTemplate = { title: p.title };
+    p._printifyExact = true;
     return p.images[0];
   }
+  // Exact Printify photo on file for this store product beats both a
+  // template match and a model Shopify photo: it is the photo Printify
+  // itself uses for this product.
+  const exact = printifyImageOf(p);
+  if (exact) {
+    p._flatTemplate = { title: p.title, brand: 'Printify' };
+    p._printifyExact = true;
+    return exact;
+  }
+  p._printifyExact = false;
   const flat = flatTemplateForTitle(p.title);
   if (flat && flat.images && flat.images[0]) {
     p._flatTemplate = flat;
@@ -1036,6 +1185,7 @@ function centreImageUrl(p) {
 function mockupSourceLabel(p) {
   if (!p) return '';
   if (catalogTemplates === null) return 'Loading flat photo…';
+  if (p._printifyExact) return 'Printify photo (exact product photo)';
   if (p._flatTemplate) return 'Printify flat product photo' + (p._flatTemplate.brand ? ' (' + esc(p._flatTemplate.brand) + ')' : '');
   return 'Not a Printify flat photo: bare store photo';
 }
@@ -1097,6 +1247,7 @@ function positionPlaceBox() {
   const img = document.getElementById('centreImg');
   const box = document.getElementById('placeBox');
   if (!img || !box) return;
+  syncDesignSize();
   if (img.style.display === 'none' || viewSide === 'back') { box.style.display = 'none'; return; }
   const p = selectedProduct();
   if (!p) { box.style.display = 'none'; return; }

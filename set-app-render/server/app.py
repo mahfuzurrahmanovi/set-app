@@ -1148,9 +1148,20 @@ def add_product(sid):
 
 
 def _entry_from_details(details):
-    """A set-product entry filled from a Shopify listing."""
-    colours = list(details.get("colours") or [])
-    sizes = list(details.get("sizes") or [])
+    """A set-product entry filled from a Shopify listing.
+
+    Products are auto-selected: colours/sizes default to the full
+    lists. If a details dict arrives with empty colours/sizes but a
+    full list on file, fill from the full list so no product can
+    arrive unselected (nothing is invented: only lists already
+    present in details are used).
+    """
+    colours = list(details.get("colours") or
+                   details.get("all_colours") or [])
+    sizes = list(details.get("sizes") or
+                 details.get("all_sizes") or [])
+    all_colours = list(details.get("all_colours") or colours)
+    all_sizes = list(details.get("all_sizes") or sizes)
     shop = shopify_api.shop_domain()
     handle = details.get("handle") or ""
     url = f"https://{shop}/products/{handle}" if shop and handle else ""
@@ -1177,9 +1188,9 @@ def _entry_from_details(details):
         "image": details.get("image"),
         "images": list(details.get("images") or []),
         "colours": colours,
-        "all_colours": colours,
+        "all_colours": all_colours,
         "sizes": sizes,
-        "all_sizes": sizes,
+        "all_sizes": all_sizes,
         "variant_prices": prices,
         "variants": details.get("variants"),
         "default_color": colours[0] if colours else None,
@@ -1712,6 +1723,10 @@ def set_product_variants(sid, pid):
         p["colours"] = [str(c) for c in body["colours"]]
     if "sizes" in body:
         p["sizes"] = [str(s) for s in body["sizes"]]
+    # Clearing colours must not leave a stale default that is no
+    # longer selected.
+    if p.get("default_color") not in (p.get("colours") or []):
+        p["default_color"] = (p["colours"][0] if p["colours"] else None)
     save_sets(sets)
     return jsonify(sets[sid])
 

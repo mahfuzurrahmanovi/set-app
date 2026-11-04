@@ -128,10 +128,11 @@ def match_template_for_title(title):
 
     Only the 3 verified templates exist, so only these map:
     - "v-neck" / "v neck" -> Bella+Canvas V-Neck (blueprint 48)
-    - "long sleeve" -> Gildan Ultra Cotton Long Sleeve (blueprint 80;
-      the American Apparel long sleeve, blueprint 945, is also a long
-      sleeve, but Gildan 80 is the generic first match and is used so
-      the mapping is deterministic)
+    - "classic" + "long sleeve" -> American Apparel Classic Long
+      Sleeve (blueprint 945); classic must be checked first, or a
+      classic title would wrongly fall through to Gildan 80
+    - "long sleeve" (other) -> Gildan Ultra Cotton Long Sleeve
+      (blueprint 80)
     Everything else (short sleeve, hoodie, crewneck, mug, hat, kids,
     etc.) returns None: no template exists, so no Printify URL is
     invented for it and the bare store photo must be used instead.
@@ -139,6 +140,8 @@ def match_template_for_title(title):
     if not title:
         return None
     t = str(title).lower()
+    if "classic" in t and "long sleeve" in t:
+        return get_template("catalog:printify-945")
     if "v-neck" in t or "v neck" in t:
         return get_template("catalog:printify-48")
     if "long sleeve" in t:

@@ -181,10 +181,13 @@ def main():
     for marker in ["FRONT", "BACK", 'id="centreImg"', "PRODUCTS",
                    "Pick colors", 'id="pickColorsModal"',
                    "Select All", "Upload design", "Master placement",
-                   "Add products", "Catalog products",
+                   "Add products",
                    "Variants and publish",
                    "Publish to Shopify (live)"]:
         check(f"designer page has {marker}", marker in body)
+    # Catalog removed 2026-11-06 (Ovi: no Printify connection).
+    check("designer page has no Catalog products card",
+          "Catalog products" not in body and "catalogList" not in body)
     check("designer page links back to /campaigns",
           'href="/campaigns"' in body)
     check("designer page links to its settings",

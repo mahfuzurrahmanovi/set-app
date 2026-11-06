@@ -22,9 +22,6 @@ function clampPlacement(pl) {
     angle: (p.angle === undefined ? 0 : +p.angle)
   };
 }
-// Printify flat-photo templates, loaded from /api/catalog/templates.
-let catalogTemplates = null;
-let catalogTemplatesTried = false;
 function slugify(name) {
   return (name || '').toLowerCase().trim()
     .replace(/[^a-z0-9]+/g, '-')
@@ -58,25 +55,6 @@ function bindSlugAuto() {
     });
     cSlug.addEventListener('input', function() { campaignSlugManual = true; });
   }
-}
-function flatTemplateForTitle(title) {
-  if (!title || !catalogTemplates) return null;
-  const t = String(title).toLowerCase();
-  // Classic first, before v-neck: a "Classic Long Sleeve" title must
-  // not fall through to the Ultra Cotton template, which is a
-  // different product. (No real title is both, but the order must
-  // match the plan, not contradict it.)
-  if (t.indexOf('classic') !== -1 && t.indexOf('long sleeve') !== -1) {
-    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('classic long sleeve') !== -1; })[0] || null;
-  }
-  if (t.indexOf('v-neck') !== -1 || t.indexOf('v neck') !== -1) {
-    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('v-neck') !== -1; })[0] || null;
-  }
-  if (t.indexOf('long sleeve') !== -1) {
-    return catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('ultra cotton long sleeve') !== -1; })[0]
-      || catalogTemplates.filter(function(x) { return x.title && x.title.toLowerCase().indexOf('long sleeve') !== -1; })[0] || null;
-  }
-  return null;
 }
 function printifyImageOf(p) {
   // Exact Printify photo already on file for this store product, if
@@ -173,7 +151,6 @@ async function doLogin() {
     document.getElementById('loginCard').style.display = 'none';
     document.getElementById('loginPassword').value = '';
     loadSetList();
-    loadCatalogTemplates();
   } catch (e) { box.innerHTML = '<p class="warn">Login failed. Try again.</p>'; }
 }
 async function doLogout() {
@@ -1179,10 +1156,10 @@ function designAreaTemplateUrl(title, side) {
   return '/static/design-area-templates/shortsleeve-front.png';
 }
 function centreImageUrl(p) {
-  // Gearlaunch-style base: a flat Printify product photo when a
-  // template matches this product type, otherwise the BARE store
-  // photo. Never a rendered mockup: one already has a design
-  // printed on it, so using it stacks a new design on the old one.
+  // Gearlaunch-style base: the flat design-area outline for this
+  // product type, otherwise the BARE store photo. Never a rendered
+  // mockup: one already has a design printed on it, so using it
+  // stacks a new design on the old one.
   if (!p) return '';
   const designArea = designAreaTemplateUrl(p.title, viewSide);
   if (designArea) {
@@ -1206,11 +1183,6 @@ function centreImageUrl(p) {
     return exact;
   }
   p._printifyExact = false;
-  const flat = flatTemplateForTitle(p.title);
-  if (flat && flat.images && flat.images[0]) {
-    p._flatTemplate = flat;
-    return flat.images[0];
-  }
   p._flatTemplate = null;
   const bare = (p.images && p.images[0]) || p.image || p._photoBare || '';
   if (bare && bare.indexOf('/static/mockups/') === -1) return bare;
@@ -1219,7 +1191,6 @@ function centreImageUrl(p) {
 function mockupSourceLabel(p) {
   if (!p) return '';
   if (p._designArea) return 'Printify design-page template (flat outline, dashed print area)';
-  if (catalogTemplates === null) return 'Loading flat photo…';
   if (p._printifyExact) return 'Printify photo (exact product photo)';
   if (p._flatTemplate) return 'Printify flat product photo' + (p._flatTemplate.brand ? ' (' + esc(p._flatTemplate.brand) + ')' : '');
   return 'Not a Printify flat photo: bare store photo';
@@ -1239,13 +1210,6 @@ function renderCentreMockup() {
     return;
   }
   bindCentreDrag();
-  if (!catalogTemplatesTried) {
-    catalogTemplatesTried = true;
-    fetch('/api/catalog/templates').then(function(r) { return r.json(); }).then(function(j) {
-      catalogTemplates = j;
-      renderCentreMockup();
-    }).catch(function() { catalogTemplatesTried = false; });
-  }
   const srcEl = document.getElementById('mockupSource');
   if (srcEl && p) srcEl.innerHTML = '<small>' + mockupSourceLabel(p) + '</small>';
   if (!url) {
@@ -1471,33 +1435,6 @@ async function saveDraft() {
 function scrollToPickers() {
   const el = document.getElementById('pickerCard');
   if (el) el.scrollIntoView({ behavior: 'smooth' });
-}
-async function loadCatalogTemplates() {
-  const box = document.getElementById('catalogList');
-  if (!box) return;
-  let r;
-  try { r = await fetch('/api/catalog/templates'); } catch (e) { box.innerHTML = '<small>Could not load catalog. Reload and try again.</small>'; return; }
-  if (!r.ok) { box.innerHTML = '<small>Could not load catalog.</small>'; return; }
-  const items = await r.json();
-  box.innerHTML = items.map(function(t) {
-    return '<div style="margin-top:12px"><b>' + esc(t.title) + '</b> <small>(' + esc(t.brand) + ')</small><br>'
-      + '<small>' + t.colours.length + ' colours, ' + t.sizes.length + ' sizes</small> <span class="badge">Catalog template, not a store product yet</span>'
-      + '<button onclick="addCatalogTemplate(\'' + esc(t.product_id) + '\')">Add to set</button></div>';
-  }).join('') + '<button class="secondary" onclick="addAllCatalogTemplates()">Add all 3 to set</button>';
-}
-async function addCatalogTemplate(pid) {
-  if (!currentSet) return alert('Create or open a set first.');
-  try {
-    const j = await postSet('/catalog-templates', { product_ids: [pid] });
-    refreshAfterSet(j.set);
-  } catch (e) { alert(e.message); }
-}
-async function addAllCatalogTemplates() {
-  if (!currentSet) return alert('Create or open a set first.');
-  try {
-    const j = await postSet('/catalog-templates', { all: true });
-    refreshAfterSet(j.set);
-  } catch (e) { alert(e.message); }
 }
 async function setGrouping(g) {
   if (!currentSet) return alert('Create a set first.');

@@ -1,28 +1,28 @@
-"""Tests for the 7-type expansion round (2026-11-06), updated to Ovi's
-decided spec the same day.
+"""Tests for the catalog removal (2026-11-06, Ovi: the app must have
+no Printify connection). The 3 Printify catalog templates are gone.
 
 Run from the repo root or the server folder:
     python server/expansion_types_test.py
 
 Checks, with no network and no real Shopify (mock-free: only dry-run
 publish is called, which never contacts Shopify):
-  1. The 3 new product types in catalog.py match the decided spec
-     (blueprints 80/2806/48, provider 99, Ovi's Oregon colours,
-     Long Sleeve S-5XL, Classic S-3XL, V-neck S-2XL, print areas
-     from the provider-99 variants endpoint) and carry the per-type
-     prices Ovi confirmed on 2026-11-06 (Long Sleeve $27, Classic
-     $29, V-neck $29, all USD).
-  2. Titles used for the new Oregon products pick the right flat
-     design-area template and catalog template.
+  1. The catalog is empty: TEMPLATES == [], get_template returns None
+     for the old catalog ids, and catalog.py source contains no
+     Printify data (no "printify", blueprint, provider or
+     images.printify.com references). match_template_for_title and
+     template_entry no longer exist.
+  2. The frontend no longer fetches or renders catalog templates:
+     no /api/catalog/templates fetch, no loadCatalogTemplates, no
+     flatTemplateForTitle, no "Catalog products" card in the designer.
+     The design-area PNG mapping (long sleeve / v-neck) is still there.
   3. The four design-area template images (crewneck, long sleeve,
      v-neck, hoodie) contain no baked-in dashed print-area box: no red
      pixels, a small fixed grey palette, and no ghost dashes along the
      old box edges. The app's own placebox is the only dashed area.
-  4. Grouped mode: new campaigns default to grouped, and a grouped
-     set with the 3 templates (138 grid variants) previews and chunks
-     cleanly with NO limit text. A synthetic 144-variant product is
-     then added to prove the Grouped guard fix: Grouped still allows
-     it, while Combine and Split keep their guards (regression).
+  4. The catalog endpoints are gone (404) and the Grouped guard fix
+     still holds, proved with a plain synthetic 144-variant product
+     (no catalog): Grouped allows it, while Combine and Split keep
+     their guards (regression).
 Writes only to a temporary data directory, never to data/sets.json.
 """
 
@@ -60,49 +60,38 @@ def check(name, cond, detail=""):
 
 
 # ---------------------------------------------------------------- 1
-T = {t["blueprint_id"]: t for t in catalog.TEMPLATES}
-check("three templates", sorted(T) == [48, 80, 2806], sorted(T))
-spec = {
-    80: ("Gildan", "Unisex Ultra Cotton Long Sleeve Tee", 11, 8,
-         (3033, 3442), "27.00", True),
-    2806: ("Gildan", "Long Sleeve T-Shirt", 5, 6,
-           (4500, 5100), "29.00", True),
-    48: ("Bella+Canvas", "Unisex Jersey Short Sleeve V-Neck Tee", 4, 5,
-         (3461, 3922), "29.00", True),
-}
-for bp, (brand, title, nc, ns, area, price, confirmed) in spec.items():
-    t = T[bp]
-    check("bp%d brand" % bp, t["brand"] == brand)
-    check("bp%d title" % bp, t["title"] == title)
-    check("bp%d provider 99" % bp, t["provider_id"] == 99)
-    check("bp%d colours" % bp, len(t["colours"]) == nc, len(t["colours"]))
-    check("bp%d sizes" % bp, len(t["sizes"]) == ns, len(t["sizes"]))
-    check("bp%d print area" % bp,
-          (t["print_area"]["width"], t["print_area"]["height"]) == area)
-    check("bp%d suggested price" % bp, t.get("suggested_price") == price)
-    check("bp%d price_confirmed" % bp, t.get("price_confirmed") is confirmed)
-    e = catalog.template_entry(t)
-    check("bp%d entry sale_price" % bp, e["sale_price"] == price)
-    check("bp%d entry stays catalog" % bp,
-          e["kind"] == "catalog" and e["template"] is True)
-    check("bp%d entry all selected" % bp,
-          e["colours"] == t["colours"] and e["sizes"] == t["sizes"])
-    check("bp%d entry base_cost empty" % bp, e["base_cost"] is None)
+check("catalog TEMPLATES empty", catalog.TEMPLATES == [],
+      catalog.TEMPLATES)
+for pid in ("catalog:printify-80", "catalog:printify-2806",
+            "catalog:printify-48", "catalog:anything"):
+    check("get_template(%s) is None" % pid,
+          catalog.get_template(pid) is None)
+check("match_template_for_title removed",
+      not hasattr(catalog, "match_template_for_title"))
+check("template_entry removed", not hasattr(catalog, "template_entry"))
+_src = open(os.path.join(HERE, "catalog.py")).read()
+for needle in ("printify", "blueprint", "provider",
+               "images.printify.com", "Gildan", "Bella"):
+    check("catalog.py has no %r" % needle,
+          needle.lower() not in _src.lower(), needle)
 
 # ---------------------------------------------------------------- 2
-m = catalog.match_template_for_title
-check("title long sleeve -> 80",
-      m("Oregon Ducks Long Sleeve Tee")["blueprint_id"] == 80)
-check("title classic -> 2806",
-      m("Oregon Ducks Classic Long Sleeve Tee")["blueprint_id"] == 2806)
-check("title v-neck -> 48", m("Oregon Ducks V-Neck Tee")["blueprint_id"] == 48)
-check("title tee -> none", m("Oregon Ducks Unisex Tee") is None)
-
 js = open(os.path.join(HERE, "static", "app.js")).read() \
     if os.path.exists(os.path.join(HERE, "static", "app.js")) else ""
+html = open(os.path.join(HERE, "templates", "designer.html")).read() \
+    if os.path.exists(os.path.join(HERE, "templates",
+                                   "designer.html")) else ""
 if js:
     check("js maps long sleeve template", "longsleeve-front.png" in js)
     check("js maps v-neck template", "vneck-front.png" in js)
+    check("js has no catalog fetch", "/api/catalog/templates" not in js)
+    check("js has no loadCatalogTemplates", "loadCatalogTemplates" not in js)
+    check("js has no flatTemplateForTitle", "flatTemplateForTitle" not in js)
+    check("js has no catalogTemplates var", "catalogTemplates" not in js)
+    check("js still uses design-area PNGs", "designAreaTemplateUrl" in js)
+if html:
+    check("designer has no Catalog products card",
+          "Catalog products" not in html and "catalogList" not in html)
 
 # ---------------------------------------------------------------- 3
 TPL = os.path.join(HERE, "static", "design-area-templates")
@@ -157,22 +146,51 @@ def post(path, body=None):
     return client.post(path, data=json.dumps(body or {}), headers=H)
 
 
+check("GET /api/catalog/templates is 404",
+      client.get("/api/catalog/templates").status_code == 404)
+r = post("/api/sets/no-such-set/catalog-templates", {"all": True})
+check("POST catalog-templates is 404 (no such route)",
+      r.status_code == 404, r.status_code)
+
 r = post("/api/campaigns", {"name": "Expansion test", "slug": "expansion-test"})
 check("campaign created", r.status_code == 201, r.status_code)
 sid = r.get_json()["id"]
 check("new campaign defaults grouped", r.get_json()["grouping"] == "grouped")
 r = post("/api/sets", {"name": "Plain set"})
 check("new set defaults grouped", r.get_json()["grouping"] == "grouped")
-
 r = post("/api/sets/%s/catalog-templates" % sid, {"all": True})
-check("catalog add all", r.status_code == 200 and len(r.get_json()["added"]) == 3)
+check("POST catalog-templates on a real set is 404",
+      r.status_code == 404, r.status_code)
+
+# Grouped guard-fix regression, with a plain synthetic product (no
+# catalog): 18 colours x 8 sizes = 144 variants, over 100 on its own.
+big = {
+    "product_id": "synthetic-144",
+    "kind": "store",
+    "title": "Synthetic 144-variant Long Sleeve",
+    "colours": ["Ash", "Black", "Carolina Blue", "Dark Chocolate",
+                "Dark Heather", "Forest Green", "Gold", "Irish Green",
+                "Light Blue", "Light Pink", "Maroon", "Navy", "Purple",
+                "Red", "Royal", "Safety Green", "Sport Grey", "White"],
+    "sizes": ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"],
+    "all_colours": ["Ash", "Black", "Carolina Blue", "Dark Chocolate",
+                    "Dark Heather", "Forest Green", "Gold", "Irish Green",
+                    "Light Blue", "Light Pink", "Maroon", "Navy", "Purple",
+                    "Red", "Royal", "Safety Green", "Sport Grey", "White"],
+    "all_sizes": ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"],
+    "images": [], "image": None, "position": "front", "mockups": [],
+    "hero_image": None, "locked": True, "override_placement": None,
+    "sale_price": "27.00", "compare_at_price": None, "base_cost": None,
+}
 sets = app_module.load_sets()
+sets[sid]["products"].append(big)
 sets[sid]["design_url"] = "/static/uploads/fake.png"
 app_module.save_sets(sets)
 
 r = client.get("/api/sets/%s/variant-count" % sid)
 vs = r.get_json()
-check("grouped total 138", vs["total_combine"] == 138, vs.get("total_combine"))
+check("grouped total 144", vs["total_combine"] == 144,
+      vs.get("total_combine"))
 check("grouped guard ok", vs["guard_ok"] is True)
 msg = vs["message"].lower()
 check("grouped message has no limit text",
@@ -186,44 +204,13 @@ check("grouped dry-run publish allowed",
       r.status_code == 200, (r.status_code, j))
 if r.status_code == 200:
     sizes = [len(p["variants"]) for p in j["products"]]
-    check("grouped chunks sum to 138", sum(sizes) == 138, sizes)
+    check("grouped chunks sum to 144", sum(sizes) == 144, sizes)
     check("grouped chunks each <= 95", all(n <= 95 for n in sizes), sizes)
     check("grouped has 2 listings", len(sizes) == 2, sizes)
     blob = json.dumps(j.get("warnings", [])).lower() + \
         j["variant_summary"]["message"].lower()
     check("grouped preview shows no limit text",
           "limit" not in blob and "100-variant" not in blob, blob)
-
-# Grouped guard-fix regression: a synthetic 144-variant product
-# (full Gildan 2400 grid, 18 colours x 8 sizes) must NOT be blocked
-# in Grouped mode, even though it is over 100 on its own.
-sets = app_module.load_sets()
-big = catalog.template_entry(T[80])
-big["product_id"] = "synthetic-144"
-big["title"] = "Synthetic 144-variant Long Sleeve"
-big["colours"] = ["Ash", "Black", "Carolina Blue", "Dark Chocolate",
-                  "Dark Heather", "Forest Green", "Gold", "Irish Green",
-                  "Light Blue", "Light Pink", "Maroon", "Navy", "Purple",
-                  "Red", "Royal", "Safety Green", "Sport Grey", "White"]
-big["sizes"] = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]
-big["all_colours"] = list(big["colours"])
-big["all_sizes"] = list(big["sizes"])
-sets[sid]["products"].append(big)
-app_module.save_sets(sets)
-r = client.get("/api/sets/%s/variant-count" % sid)
-vs = r.get_json()
-check("grouped total 282 with big product",
-      vs["total_combine"] == 282, vs.get("total_combine"))
-check("grouped guard ok with big product", vs["guard_ok"] is True)
-r = post("/api/sets/%s/publish" % sid, {"dry_run": True})
-j = r.get_json()
-check("grouped dry-run publish allowed (product over 100)",
-      r.status_code == 200, (r.status_code, j))
-if r.status_code == 200:
-    sizes = [len(p["variants"]) for p in j["products"]]
-    check("grouped chunks sum to 282", sum(sizes) == 282, sizes)
-    check("grouped chunks each <= 95", all(n <= 95 for n in sizes), sizes)
-    check("grouped has 3 listings", len(sizes) == 3, sizes)
 
 # regressions: combine and split keep their guards
 sets = app_module.load_sets()

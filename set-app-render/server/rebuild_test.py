@@ -53,6 +53,36 @@ def make_png(path, size=(800, 800), transparent=True, fmt="PNG"):
     img.save(path, fmt)
 
 
+# Plain synthetic store products (no catalog): fixtures for variant
+# math, pricing, publish and hero checks since the catalog templates
+# were removed 2026-11-06 (Ovi: no Printify connection).
+SYNTH_COLOURS_11 = ["Ash", "Black", "Dark Heather", "Gold", "Irish Green",
+                    "Navy", "Purple", "Red", "Royal", "Sport Grey",
+                    "White"]
+SYNTH_SIZES_8 = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]
+
+
+def synth_product(pid, title, colours, sizes, images=None):
+    return {
+        "product_id": pid, "kind": "store", "title": title,
+        "colours": list(colours), "all_colours": list(colours),
+        "sizes": list(sizes), "all_sizes": list(sizes),
+        "images": list(images or []),
+        "image": (images or [None])[0],
+        "position": "front", "mockups": [], "mockup_versions": {},
+        "hero_image": None, "locked": True, "override_placement": None,
+        "sale_price": None, "compare_at_price": None, "base_cost": None,
+    }
+
+
+def add_products_to_set(sid, products):
+    with open(app_module.DATA_FILE) as f:
+        sets = json.load(f)
+    sets[sid]["products"].extend(products)
+    with open(app_module.DATA_FILE, "w") as f:
+        json.dump(sets, f)
+
+
 def main():
     real_hash_before = sha(REAL_SETS)
     tmp = tempfile.mkdtemp(prefix="setapp-test-")
@@ -114,21 +144,32 @@ def main():
         r = client.post(f"/api/sets/{sid}/details", json={"grouping": "bogus"})
         check("bad grouping rejected", r.status_code == 400)
 
-        print("== 3. Catalog templates ==")
-        r = client.get("/api/catalog/templates")
-        templates = r.get_json()
-        check("3 templates listed", len(templates) == 3, str(len(templates)))
-        check("template image URLs real Printify",
-              all(u.startswith("https://images.printify.com/")
-                  for t in templates for u in t["images"]))
-        r = client.post(f"/api/sets/{sid}/catalog-templates", json={"all": True})
-        j = r.get_json()
-        check("all 3 added", len(j["added"]) == 3, str(j["added"]))
-        check("templates marked catalog",
-              all(p.get("kind") == "catalog" and p.get("template") is True
-                  for p in j["set"]["products"]))
-        r = client.post(f"/api/sets/{sid}/catalog-templates", json={"all": True})
-        check("re-add dedupes", r.get_json()["added"] == [])
+        print("== 3. Synthetic products (catalog removed 2026-11-06) ==")
+        check("catalog templates endpoint is 404",
+              client.get("/api/catalog/templates").status_code == 404)
+        r = client.post(f"/api/sets/{sid}/catalog-templates",
+                        json={"all": True})
+        check("catalog-templates add endpoint is 404",
+              r.status_code == 404, str(r.status_code))
+        # 3 synthetic store products with the old decided grids:
+        # 11x8=88, 5x6=30, 4x5=20 -> 138 combine.
+        add_products_to_set(sid, [
+            synth_product("synthetic-longsleeve",
+                          "Synthetic Long Sleeve Tee",
+                          SYNTH_COLOURS_11, SYNTH_SIZES_8),
+            synth_product("synthetic-classic",
+                          "Synthetic Classic Long Sleeve Tee",
+                          ["Black", "Navy", "Royal", "Sport Grey", "White"],
+                          ["S", "M", "L", "XL", "2XL", "3XL"]),
+            synth_product("synthetic-vneck",
+                          "Synthetic V-Neck Tee",
+                          ["Black", "Navy", "Red", "White"],
+                          ["S", "M", "L", "XL", "2XL"]),
+        ])
+        r = client.get("/api/sets")
+        mine = [s for s in r.get_json() if s["id"] == sid][0]
+        check("3 synthetic products in set",
+              len(mine["products"]) == 3, str(len(mine["products"])))
 
         print("== 4. Variant math + 100 guard ==")
         r = client.get(f"/api/sets/{sid}/variant-count")
@@ -141,12 +182,12 @@ def main():
         check("split guard passes with decided selections",
               j["guard_ok"] is True, str(j))
         # The guard itself still blocks a >100 product: add a
-        # synthetic 144-variant product (full Gildan 2400 grid, 18
-        # colours x 8 sizes), copied from the bp-80 entry.
+        # synthetic 144-variant product (full 18-colour x 8-size grid),
+        # copied from the synthetic long sleeve entry.
         with open(app_module.DATA_FILE) as f:
             sets = json.load(f)
         src = [p for p in sets[sid]["products"]
-               if p["product_id"] == "catalog:printify-80"][0]
+               if p["product_id"] == "synthetic-longsleeve"][0]
         big = dict(src)
         big["product_id"] = "synthetic-144"
         big["title"] = "Synthetic 144-variant Long Sleeve"
@@ -179,7 +220,7 @@ def main():
               j["guard_ok"] is True and j["total_combine"] == 138 + 96,
               str(j))
         # Remove the synthetic product so later sections see only the
-        # 3 decided templates.
+        # 3 synthetic products.
         with open(app_module.DATA_FILE) as f:
             sets = json.load(f)
         sets[sid]["products"] = [
@@ -193,8 +234,8 @@ def main():
         orig_create = shopify_api.create_live_product
         shopify_api.create_live_product = lambda **kw: calls.append(kw) or {"id": 1, "status": "active", "handle": "test-set-2"}
         try:
-            for pid in ("catalog:printify-80", "catalog:printify-2806",
-                        "catalog:printify-48"):
+            for pid in ("synthetic-longsleeve", "synthetic-classic",
+                        "synthetic-vneck"):
                 client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                             json={"sale_price": 10, "base_cost": 12})
             # No design yet -> design guard fires first; upload one.
@@ -218,8 +259,8 @@ def main():
                   str(r.status_code))
             check("shopify client not called on dry-run",
                   calls == [])
-            for pid in ("catalog:printify-80", "catalog:printify-2806",
-                        "catalog:printify-48"):
+            for pid in ("synthetic-longsleeve", "synthetic-classic",
+                        "synthetic-vneck"):
                 client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                             json={"sale_price": 27.99, "base_cost": 12.50})
             r = client.post(f"/api/sets/{sid}/publish",
@@ -231,8 +272,8 @@ def main():
             check("dry-run still never calls shopify", calls == [])
             # Combine dry-run: small selections -> 1 payload.
             client.post(f"/api/sets/{sid}/details", json={"grouping": "combine"})
-            for pid in ("catalog:printify-80", "catalog:printify-2806",
-                        "catalog:printify-48"):
+            for pid in ("synthetic-longsleeve", "synthetic-classic",
+                        "synthetic-vneck"):
                 client.post(f"/api/sets/{sid}/products/{pid}/variants",
                             json={"colours": ["Black", "White"],
                                   "sizes": ["S", "M"]})
@@ -270,9 +311,11 @@ def main():
             print("== 7. Publish failure path ==")
             r = client.post("/api/sets", json={"name": "Fail Set"})
             sid2 = r.get_json()["id"]
-            client.post(f"/api/sets/{sid2}/catalog-templates",
-                        json={"product_ids": ["catalog:printify-2806"]})
-            client.post(f"/api/sets/{sid2}/products/catalog:printify-2806/pricing",
+            add_products_to_set(sid2, [synth_product(
+                "synthetic-classic", "Synthetic Classic Long Sleeve Tee",
+                ["Black", "Navy", "Royal", "Sport Grey", "White"],
+                ["S", "M", "L", "XL", "2XL", "3XL"])])
+            client.post(f"/api/sets/{sid2}/products/synthetic-classic/pricing",
                         json={"sale_price": 30, "base_cost": 12})
             with open(tpng, "rb") as fh:
                 client.post(f"/api/sets/{sid2}/upload",
@@ -329,10 +372,16 @@ def main():
         check("no file rejected", r.status_code == 400)
 
         print("== 9. Hero picker ==")
-        r = client.post(f"/api/sets/{sid3}/catalog-templates",
-                        json={"product_ids": ["catalog:printify-48"]})
-        pid48 = "catalog:printify-48"
-        imgs = r.get_json()["set"]["products"][0]["images"]
+        pid48 = "synthetic-vneck"
+        add_products_to_set(sid3, [synth_product(
+            pid48, "Synthetic V-Neck Tee",
+            ["Black", "Navy", "Red", "White"], ["S", "M", "L", "XL", "2XL"],
+            images=["https://example.test/vneck-a.jpg",
+                    "https://example.test/vneck-b.jpg"])])
+        r = client.get("/api/sets")
+        imgs = [p for s in r.get_json() if s["id"] == sid3
+                for p in s["products"]
+                if p["product_id"] == pid48][0]["images"]
         r = client.post(f"/api/sets/{sid3}/products/{pid48}/hero",
                         json={"image": imgs[1]})
         check("hero changed",

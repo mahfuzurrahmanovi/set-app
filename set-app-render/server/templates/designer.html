@@ -126,13 +126,6 @@
 
 
 <div class="card">
-  <h2>Catalog products</h2>
-  <p><small>Printify catalog products you can design on here. Marked clearly: these are not store products yet. Catalog templates have no price yet, so they cannot be sorted by price.</small></p>
-  <div id="catalogList"><small>Loading catalog...</small></div>
-</div>
-
-
-<div class="card">
   <h2>Variants and publish</h2>
   <div id="variantCount"><small>Open a set to see variant counts.</small></div>
   <p id="draftLine"><small>Open a set to start.</small></p>
@@ -159,7 +152,7 @@ loadSetById('{{ view.id }}').then(function() {
   setVal('angle', (mp.angle === undefined ? 0 : mp.angle));
   showVals(); clearDirty(); updateCurrentSetLine(); renderProducts();
   fillCampaignSettings(); renderVariantCount(); renderPublishStatus(); renderDraftLine();
-  renderCentreMockup(); renderArtworkSpec(); loadCatalogTemplates();
+  renderCentreMockup(); renderArtworkSpec();
 }).catch(function(e) { alert(e.message); });
 </script>
 </body>

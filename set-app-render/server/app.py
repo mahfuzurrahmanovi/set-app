@@ -23,7 +23,7 @@ import requests
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session
 
 import shopify as shopify_api
-from catalog import TEMPLATES, get_template, template_entry
+from catalog import get_template
 from design_validation import validate_design
 from mockup import effective_placement, render_set_mockups
 from text_layers import composite_layers, render_text_png, validate_layer
@@ -1186,8 +1186,8 @@ def add_product(sid):
         return jsonify(sets[sid])
     if pid.startswith("catalog:"):
         return jsonify({
-            "error": "Catalog templates are added from the Catalog "
-                     "products section, not by product ID."
+            "error": "Catalog templates were removed from the app "
+                     "(2026-11-06), so catalog IDs cannot be added."
         }), 400
     if not shopify_api.authenticated():
         return jsonify({
@@ -1741,33 +1741,6 @@ def delete_set(sid):
         _delete_file_if_orphan(
             sets, layer_png_url(sid, layer["id"]))
     return jsonify({"deleted": sid})
-
-
-@app.route("/api/sets/<sid>/catalog-templates", methods=["POST"])
-def add_catalog_templates(sid):
-    """Add catalog templates (1 or all 3) as designable set products.
-
-    Body: {"product_ids": [...]} or {"all": true}. Deduplicates.
-    Templates are clearly marked kind=catalog in the stored entry.
-    """
-    body = request.get_json(force=True) or {}
-    sets = load_sets()
-    if sid not in sets:
-        return jsonify({"error": "set not found"}), 404
-    if body.get("all"):
-        wanted = [t["product_id"] for t in TEMPLATES]
-    else:
-        wanted = body.get("product_ids", [])
-    added = []
-    for pid in wanted:
-        template = get_template(pid)
-        if template is None:
-            continue
-        if find_product(sets[sid], pid) is None:
-            sets[sid]["products"].append(template_entry(template))
-            added.append(pid)
-    save_sets(sets)
-    return jsonify({"added": added, "set": sets[sid]})
 
 
 @app.route("/api/sets/<sid>/products/<path:pid>/variants", methods=["POST"])
@@ -2509,13 +2482,12 @@ def product_photo(sid, pid):
     """Product photo URL for the centre mockup.
 
     Default priority: the product's own stored mockups/hero/images,
-    then catalog template images, then the Shopify featured image via
-    the stored token. With ?bare=1 the priority is the BARE photo
-    only (stored image/images[0], catalog image, Shopify featured) —
-    never a rendered mockup — so rendering never composites
-    design-on-design. Never mutates sets.json. No photo (no token,
-    failed lookup, or none on file) returns photo null with an honest
-    error instead of an invented image.
+    then the Shopify featured image via the stored token. With ?bare=1
+    the priority is the BARE photo only (stored image/images[0],
+    Shopify featured) — never a rendered mockup — so rendering never
+    composites design-on-design. Never mutates sets.json. No photo (no
+    token, failed lookup, or none on file) returns photo null with an
+    honest error instead of an invented image.
     """
     sets = load_sets()
     if sid not in sets:
@@ -2556,7 +2528,7 @@ def product_photo(sid, pid):
 def bare_photo_for_product(set_obj, product):
     """Bare (unrendered) photo URL for a product, or None.
 
-    Order: stored image/images[0], catalog image, Shopify featured.
+    Order: stored image/images[0], Shopify featured.
     Rendered mockups are never returned here.
     """
     for url in (product.get("images") or []):
@@ -2765,19 +2737,6 @@ def make_mockups(sid):
     if errors:
         result["errors"] = errors
     return jsonify(result)
-
-
-@app.route("/api/catalog/templates", methods=["GET"])
-def list_catalog_templates():
-    """The 3 catalog templates available to add to any set."""
-    return jsonify([{
-        "product_id": t["product_id"],
-        "brand": t["brand"],
-        "title": t["title"],
-        "colours": t["colours"],
-        "sizes": t["sizes"],
-        "images": t["images"],
-    } for t in TEMPLATES])
 
 
 if __name__ == "__main__":

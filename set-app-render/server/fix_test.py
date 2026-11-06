@@ -210,24 +210,19 @@ def main():
                if p["product_id"] == tee][0]["mockups"]
               == ["/static/mockups/b.jpg", "/static/mockups/a.jpg"])
 
-        print("== 7. Catalog template photo (no Shopify call) ==")
+        print("== 7. Catalog endpoints removed (2026-11-06, no Printify) ==")
         r2 = client.get("/api/catalog/templates")
-        templates = r2.get_json() or []
-        check("catalog templates list non-empty", bool(templates))
-        if templates:
-            tid = templates[0]["product_id"]
-            r = client.post(f"/api/sets/{sid}/catalog-templates",
-                            json={"product_ids": [tid]})
-            check("catalog template added", r.status_code == 200,
-                  str(r.status_code) + " "
-                  + r.get_data(as_text=True)[:200])
-            r = client.get(f"/api/sets/{sid}/products/{tid}/photo")
-            j = r.get_json() or {}
-            check("catalog photo returned without Shopify",
-                  r.status_code == 200 and bool(j.get("photo"))
-                  and j.get("source") in ("catalog", "hero")
-                  and "printify.com" in j.get("photo", ""),
-                  str(j)[:200])
+        check("catalog templates endpoint is 404",
+              r2.status_code == 404, str(r2.status_code))
+        r = client.post(f"/api/sets/{sid}/catalog-templates",
+                        json={"product_ids": ["catalog:printify-80"]})
+        check("catalog-templates add endpoint is 404",
+              r.status_code == 404, str(r.status_code))
+        r = client.get(f"/api/sets/{sid}/products/{tee}/photo")
+        j = r.get_json() or {}
+        check("store product photo has no catalog source",
+              r.status_code == 200 and j.get("source") != "catalog",
+              str(j)[:200])
 
         print("== 8. Regressions ==")
         check("real sets.json byte-identical",

@@ -145,25 +145,23 @@ check("hint text says design moves, print area stays",
       "print area" in open(os.path.join(HERE, "templates",
                                         "designer.html")).read().lower())
 
-# --- Fix 3: Printify flat photo matching ---
-from catalog import match_template_for_title, TEMPLATES  # noqa: E402
-long_sleeve = match_template_for_title("Unisex Long Sleeve Tee")
-vneck = match_template_for_title("Unisex Jersey Short Sleeve V-Neck Tee")
-hoodie = match_template_for_title("Unisex Heavyweight Pullover Hoodie")
-check("long sleeve maps to a Printify template",
-      long_sleeve is not None and
-      long_sleeve["images"][0].startswith("https://images.printify.com/"),
-      str(long_sleeve))
-check("v-neck maps to Bella+Canvas V-Neck template",
-      vneck is not None and vneck["blueprint_id"] == 48, str(vneck))
-check("hoodie has NO template (honest fallback, no invented URL)",
-      hoodie is None)
-check("catalog templates endpoint returns 3 real Printify images",
-      len(client.get("/api/catalog/templates").get_json()) == 3)
-check("centre mockup code prefers a flat template image",
-      "flatTemplate" in JS or "printify" in JS.lower() or
-      "templateImage" in JS,
-      "centreImageUrl must consult catalog templates by title")
+# --- Fix 3: catalog removed (2026-11-06, Ovi: no Printify connection).
+# The centre mockup is a flat design-area PNG for the product type,
+# or the stored product photo. No catalog templates exist anywhere.
+from catalog import get_template, TEMPLATES  # noqa: E402
+check("catalog is empty", TEMPLATES == [])
+check("no template for any old catalog id",
+      get_template("catalog:printify-80") is None
+      and get_template("catalog:printify-2806") is None
+      and get_template("catalog:printify-48") is None)
+check("catalog templates endpoint is 404",
+      client.get("/api/catalog/templates").status_code == 404)
+check("centre mockup uses design-area PNG or stored photo",
+      "designAreaTemplateUrl" in JS and "flatTemplateForTitle" not in JS
+      and "/api/catalog/templates" not in JS
+      and "loadCatalogTemplates" not in JS,
+      "centreImageUrl must fall back to the design-area PNG mapping "
+      "and the stored product photo, with no catalog fetch")
 
 # --- Fix 4: slug auto-generates from name ---
 check("slugify function present in JS",
@@ -296,7 +294,7 @@ check("executed: design img renders inside box and moves",
       str(_out))
 _slug_proc = _sp.run(["node", "-e",
     "var window={};var document={addEventListener:function(){}};"
-    + JS.split("function slugify")[0].split("let catalogTemplates")[0]
+    + JS.split("function slugify")[0]
     + "function slugify" + JS.split("function slugify")[1].split("\n}\n")[0] + "\n}\n"
     + "console.log(slugify('Golden State Of Mind!')+'|'+slugify('!!!'));"],
     capture_output=True, text=True)

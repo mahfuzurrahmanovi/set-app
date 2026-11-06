@@ -185,8 +185,7 @@ _js = open(os.path.join(HERE, "static", "app.js")).read()
 _tmp = os.path.join(TMP, "size.js")
 with open(_tmp, "w") as _f:
     _f.write(_harness + "\n" + _js + "\n"
-             "catalogTemplatesTried = true; catalogTemplates = [];\n"
-             "currentSet = { id: 'scale12345', design_url: '/static/uploads/test-design.png', design_width: 1000, design_height: 1000, master_placement: { x: 0.5, y: 0.45, scale: SCALE, angle: 0 }, text_layers: [], products: [{ product_id: '999', title: 'Unisex Long Sleeve Tee', locked: true, hidden_layers: [] }] };\n"
+                          "currentSet = { id: 'scale12345', design_url: '/static/uploads/test-design.png', design_width: 1000, design_height: 1000, master_placement: { x: 0.5, y: 0.45, scale: SCALE, angle: 0 }, text_layers: [], products: [{ product_id: '999', title: 'Unisex Long Sleeve Tee', locked: true, hidden_layers: [] }] };\n"
              "selectedPid = '999'; viewSide = 'front';\n"
              "var _img = document.getElementById('centreImg'); _img.style.display = 'block';\n"
              "positionPlaceBox();\n"
@@ -203,26 +202,25 @@ for _scale, _expect in [(0.2, "40%"), (0.5, "100%")]:
           ("DESIGN_WIDTH=" + _expect) in _out.stdout,
           _out.stdout[:200] + _out.stderr[:200])
 
-# --- Fix 2: exact Printify photo ---
+# --- Fix 2: exact Printify photo (stored photo of a store product) ---
 check("centre code prefers a stored Printify URL",
       "images.printify.com" in JS and "centreImageUrl" in JS)
-check("flat template matching covers classic long sleeve",
-      ("classic" in JS.lower()) and ("flatTemplateForTitle" in JS))
-check("catalog still has only the 3 real templates (no invented URLs)",
-      True)  # verified by the endpoint check below
+check("design-area PNG mapping covers long sleeve / v-neck",
+      "designAreaTemplateUrl" in JS and "longsleeve-front.png" in JS
+      and "vneck-front.png" in JS)
+from catalog import get_template, TEMPLATES  # noqa: E402
+check("catalog TEMPLATES is empty", TEMPLATES == [])
+check("get_template returns None for the old catalog ids",
+      get_template("catalog:printify-80") is None
+      and get_template("catalog:printify-2806") is None
+      and get_template("catalog:printify-48") is None)
 r = client.get("/api/catalog/templates")
-check("catalog templates endpoint returns 3 templates",
-      r.status_code == 200 and len(r.get_json()) == 3,
-      str(r.status_code))
-from catalog import match_template_for_title  # noqa: E402
-check("classic long sleeve maps to Gildan Softstyle template (2806)",
-      (match_template_for_title("Unisex Classic Long Sleeve Tee") or {}).get("blueprint_id") == 2806)
-check("v-neck maps to Bella+Canvas template (48)",
-      (match_template_for_title("Unisex Jersey Short Sleeve V-Neck Tee") or {}).get("blueprint_id") == 48)
-check("long sleeve maps to Gildan template (80)",
-      (match_template_for_title("Unisex Ultra Cotton Long Sleeve Tee") or {}).get("blueprint_id") == 80)
-check("hoodie has no template (honest fallback)",
-      match_template_for_title("Unisex Heavyweight Pullover Hoodie") is None)
+check("catalog templates endpoint is 404",
+      r.status_code == 404, str(r.status_code))
+check("no catalog fetch in the frontend",
+      "/api/catalog/templates" not in JS
+      and "flatTemplateForTitle" not in JS
+      and "loadCatalogTemplates" not in JS)
 
 # --- Fix 3: auto-select + clear remove ---
 from app import _entry_from_details  # noqa: E402
@@ -262,8 +260,7 @@ check("remove product works via API and set still loads",
 _run2 = os.path.join(TMP, "size_unlocked.js")
 with open(_run2, "w") as _f:
     _f.write(_harness + "\n" + _js + "\n"
-             "catalogTemplatesTried = true; catalogTemplates = [];\n"
-             "currentSet = { id: 'scale12345', design_url: '/static/uploads/test-design.png', design_width: 1000, design_height: 1000, master_placement: { x: 0.5, y: 0.45, scale: 0.5, angle: 0 }, text_layers: [], products: [{ product_id: '999', title: 'Unisex Long Sleeve Tee', locked: true, hidden_layers: [] }, { product_id: '888', title: 'Unisex Classic Long Sleeve Tee', locked: false, hidden_layers: [], override_placement: { x: 0.5, y: 0.45, scale: 0.5, angle: 0 } }] };\n"
+                          "currentSet = { id: 'scale12345', design_url: '/static/uploads/test-design.png', design_width: 1000, design_height: 1000, master_placement: { x: 0.5, y: 0.45, scale: 0.5, angle: 0 }, text_layers: [], products: [{ product_id: '999', title: 'Unisex Long Sleeve Tee', locked: true, hidden_layers: [] }, { product_id: '888', title: 'Unisex Classic Long Sleeve Tee', locked: false, hidden_layers: [], override_placement: { x: 0.5, y: 0.45, scale: 0.5, angle: 0 } }] };\n"
              "selectedPid = '888'; viewSide = 'front';\n"
              "document.getElementById('s').value = '0.50';\n"
              "setDesignSize(0.2);\n"

@@ -61,6 +61,30 @@ def make_design(path, size=(800, 800)):
     img.save(path, "PNG")
 
 
+# Plain synthetic store products (no catalog): fixtures for remove,
+# reorder, mockup and publish-guard checks since the catalog
+# templates were removed 2026-11-06 (Ovi: no Printify connection).
+def synth_product(pid, title, colours, sizes, images=None):
+    return {
+        "product_id": pid, "kind": "store", "title": title,
+        "colours": list(colours), "all_colours": list(colours),
+        "sizes": list(sizes), "all_sizes": list(sizes),
+        "images": list(images or []),
+        "image": (images or [None])[0],
+        "position": "front", "mockups": [], "mockup_versions": {},
+        "hero_image": None, "locked": True, "override_placement": None,
+        "sale_price": None, "compare_at_price": None, "base_cost": None,
+    }
+
+
+def add_products_to_set(sid, products):
+    with open(app_module.DATA_FILE) as f:
+        sets = json.load(f)
+    sets[sid]["products"].extend(products)
+    with open(app_module.DATA_FILE, "w") as f:
+        json.dump(sets, f)
+
+
 def main():
     real_hash_before = sha(REAL_SETS)
     tmp = tempfile.mkdtemp(prefix="setapp-r2-test-")
@@ -139,10 +163,26 @@ def main():
               mine["design_dpi"] == round(800 / 12))
 
         print("== 5. Remove product ==")
-        r = client.post(f"/api/sets/{sid}/catalog-templates",
-                        json={"all": True})
-        check("3 templates added", len(r.get_json()["added"]) == 3)
-        pid80 = "catalog:printify-80"
+        add_products_to_set(sid, [
+            synth_product("synthetic-longsleeve",
+                          "Synthetic Long Sleeve Tee",
+                          ["Ash", "Black", "Dark Heather", "Gold",
+                           "Irish Green", "Navy", "Purple", "Red", "Royal",
+                           "Sport Grey", "White"],
+                          ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]),
+            synth_product("synthetic-classic",
+                          "Synthetic Classic Long Sleeve Tee",
+                          ["Black", "Navy", "Royal", "Sport Grey", "White"],
+                          ["S", "M", "L", "XL", "2XL", "3XL"]),
+            synth_product("synthetic-vneck",
+                          "Synthetic V-Neck Tee",
+                          ["Black", "Navy", "Red", "White"],
+                          ["S", "M", "L", "XL", "2XL"]),
+        ])
+        r = client.get("/api/sets")
+        mine = [s for s in r.get_json() if s["id"] == sid][0]
+        check("3 synthetic products added", len(mine["products"]) == 3)
+        pid80 = "synthetic-longsleeve"
         r = client.post(f"/api/sets/{sid}/products/{pid80}/remove", json={})
         check("remove works",
               r.status_code == 200 and pid80 not in
@@ -156,7 +196,7 @@ def main():
         with open(app_module.DATA_FILE, "w") as f:
             json.dump(sets, f)
         r = client.post(
-            f"/api/sets/{sid}/products/catalog:printify-2806/remove", json={})
+            f"/api/sets/{sid}/products/synthetic-classic/remove", json={})
         check("remove blocked once published", r.status_code == 409,
               str(r.status_code))
         sets[sid]["publish_state"] = "draft"
@@ -167,7 +207,7 @@ def main():
         # Give the remaining template a couple of mockups first.
         r = client.get("/api/sets")
         mine = [s for s in r.get_json() if s["id"] == sid][0]
-        pid2806 = "catalog:printify-2806"
+        pid2806 = "synthetic-classic"
         prod = [p for p in mine["products"]
                 if p["product_id"] == pid2806][0]
         with open(app_module.DATA_FILE) as f:
@@ -311,7 +351,7 @@ def main():
         check("deleted layer PNG removed", not os.path.exists(png))
 
         print("== 9. Publish guards still work (regression) ==")
-        for pid in ("catalog:printify-2806", "catalog:printify-48"):
+        for pid in ("synthetic-classic", "synthetic-vneck"):
             client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                         json={"sale_price": 10, "base_cost": 12})
         # Section 8 removed the design, so re-upload it first: without

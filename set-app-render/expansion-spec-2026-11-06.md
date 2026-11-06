@@ -1,3 +1,5 @@
+Superseded 2026-11-06: the Printify catalog templates were removed per Ovi; the app has no Printify connection.
+
 # Set app 7-type expansion: specs, code changes, checklist (2026-11-06)
 
 Status: BUILD + SPECS ONLY. Nothing deployed, nothing published to Shopify,

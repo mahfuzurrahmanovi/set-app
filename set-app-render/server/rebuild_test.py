@@ -133,15 +133,41 @@ def main():
         print("== 4. Variant math + 100 guard ==")
         r = client.get(f"/api/sets/{sid}/variant-count")
         j = r.get_json()
-        # Full selections: 18x8=144, 5x5=25, 11x5=55 -> 224 combine.
-        check("combine total 224", j["total_combine"] == 224, str(j))
+        # Decided selections (2026-11-06): 11x8=88, 5x6=30, 4x5=20
+        # -> 138 combine; no product over 100, so the split guard
+        # passes with the decided selections.
+        check("combine total 138", j["total_combine"] == 138, str(j))
         check("split grouping reported", j["grouping"] == "split", str(j))
-        # Split mode with full selections: 144-product still over.
+        check("split guard passes with decided selections",
+              j["guard_ok"] is True, str(j))
+        # The guard itself still blocks a >100 product: add a
+        # synthetic 144-variant product (full Gildan 2400 grid, 18
+        # colours x 8 sizes), copied from the bp-80 entry.
+        with open(app_module.DATA_FILE) as f:
+            sets = json.load(f)
+        src = [p for p in sets[sid]["products"]
+               if p["product_id"] == "catalog:printify-80"][0]
+        big = dict(src)
+        big["product_id"] = "synthetic-144"
+        big["title"] = "Synthetic 144-variant Long Sleeve"
+        big["colours"] = ["Ash", "Black", "Carolina Blue", "Dark Chocolate",
+                          "Dark Heather", "Forest Green", "Gold",
+                          "Irish Green", "Light Blue", "Light Pink",
+                          "Maroon", "Navy", "Purple", "Red", "Royal",
+                          "Safety Green", "Sport Grey", "White"]
+        big["sizes"] = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]
+        big["all_colours"] = list(big["colours"])
+        big["all_sizes"] = list(big["sizes"])
+        sets[sid]["products"].append(big)
+        with open(app_module.DATA_FILE, "w") as f:
+            json.dump(sets, f)
+        r = client.get(f"/api/sets/{sid}/variant-count")
+        j = r.get_json()
         check("split guard fails on 144-product",
-              j["guard_ok"] is False, str(j))
-        # Trim template 80 to 12 colours -> 96, split guard passes.
-        pid80 = "catalog:printify-80"
-        r = client.post(f"/api/sets/{sid}/products/{pid80}/variants",
+              j["guard_ok"] is False
+              and j["total_combine"] == 138 + 144, str(j))
+        # Trim the synthetic product to 12 colours -> 96, guard passes.
+        r = client.post(f"/api/sets/{sid}/products/synthetic-144/variants",
                         json={"colours": ["Black", "Navy", "Red", "Royal",
                                           "White", "Ash", "Gold", "Maroon",
                                           "Purple", "Forest Green",
@@ -150,15 +176,24 @@ def main():
         r = client.get(f"/api/sets/{sid}/variant-count")
         j = r.get_json()
         check("split guard passes after trim",
-              j["guard_ok"] is True and j["total_combine"] == 96 + 25 + 55,
+              j["guard_ok"] is True and j["total_combine"] == 138 + 96,
               str(j))
+        # Remove the synthetic product so later sections see only the
+        # 3 decided templates.
+        with open(app_module.DATA_FILE) as f:
+            sets = json.load(f)
+        sets[sid]["products"] = [
+            p for p in sets[sid]["products"]
+            if p["product_id"] != "synthetic-144"]
+        with open(app_module.DATA_FILE, "w") as f:
+            json.dump(sets, f)
 
         print("== 5. Pricing + profit guard ==")
         calls = []
         orig_create = shopify_api.create_live_product
         shopify_api.create_live_product = lambda **kw: calls.append(kw) or {"id": 1, "status": "active", "handle": "test-set-2"}
         try:
-            for pid in ("catalog:printify-80", "catalog:printify-945",
+            for pid in ("catalog:printify-80", "catalog:printify-2806",
                         "catalog:printify-48"):
                 client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                             json={"sale_price": 10, "base_cost": 12})
@@ -183,7 +218,7 @@ def main():
                   str(r.status_code))
             check("shopify client not called on dry-run",
                   calls == [])
-            for pid in ("catalog:printify-80", "catalog:printify-945",
+            for pid in ("catalog:printify-80", "catalog:printify-2806",
                         "catalog:printify-48"):
                 client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                             json={"sale_price": 27.99, "base_cost": 12.50})
@@ -196,7 +231,7 @@ def main():
             check("dry-run still never calls shopify", calls == [])
             # Combine dry-run: small selections -> 1 payload.
             client.post(f"/api/sets/{sid}/details", json={"grouping": "combine"})
-            for pid in ("catalog:printify-80", "catalog:printify-945",
+            for pid in ("catalog:printify-80", "catalog:printify-2806",
                         "catalog:printify-48"):
                 client.post(f"/api/sets/{sid}/products/{pid}/variants",
                             json={"colours": ["Black", "White"],
@@ -236,8 +271,8 @@ def main():
             r = client.post("/api/sets", json={"name": "Fail Set"})
             sid2 = r.get_json()["id"]
             client.post(f"/api/sets/{sid2}/catalog-templates",
-                        json={"product_ids": ["catalog:printify-945"]})
-            client.post(f"/api/sets/{sid2}/products/catalog:printify-945/pricing",
+                        json={"product_ids": ["catalog:printify-2806"]})
+            client.post(f"/api/sets/{sid2}/products/catalog:printify-2806/pricing",
                         json={"sale_price": 30, "base_cost": 12})
             with open(tpng, "rb") as fh:
                 client.post(f"/api/sets/{sid2}/upload",

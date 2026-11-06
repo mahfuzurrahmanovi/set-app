@@ -215,8 +215,8 @@ check("catalog templates endpoint returns 3 templates",
       r.status_code == 200 and len(r.get_json()) == 3,
       str(r.status_code))
 from catalog import match_template_for_title  # noqa: E402
-check("classic long sleeve maps to American Apparel template (945)",
-      (match_template_for_title("Unisex Classic Long Sleeve Tee") or {}).get("blueprint_id") == 945)
+check("classic long sleeve maps to Gildan Softstyle template (2806)",
+      (match_template_for_title("Unisex Classic Long Sleeve Tee") or {}).get("blueprint_id") == 2806)
 check("v-neck maps to Bella+Canvas template (48)",
       (match_template_for_title("Unisex Jersey Short Sleeve V-Neck Tee") or {}).get("blueprint_id") == 48)
 check("long sleeve maps to Gildan template (80)",

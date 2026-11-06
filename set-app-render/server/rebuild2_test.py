@@ -156,7 +156,7 @@ def main():
         with open(app_module.DATA_FILE, "w") as f:
             json.dump(sets, f)
         r = client.post(
-            f"/api/sets/{sid}/products/catalog:printify-945/remove", json={})
+            f"/api/sets/{sid}/products/catalog:printify-2806/remove", json={})
         check("remove blocked once published", r.status_code == 409,
               str(r.status_code))
         sets[sid]["publish_state"] = "draft"
@@ -167,30 +167,30 @@ def main():
         # Give the remaining template a couple of mockups first.
         r = client.get("/api/sets")
         mine = [s for s in r.get_json() if s["id"] == sid][0]
-        pid945 = "catalog:printify-945"
+        pid2806 = "catalog:printify-2806"
         prod = [p for p in mine["products"]
-                if p["product_id"] == pid945][0]
+                if p["product_id"] == pid2806][0]
         with open(app_module.DATA_FILE) as f:
             sets = json.load(f)
         target = [p for p in sets[sid]["products"]
-                  if p["product_id"] == pid945][0]
+                  if p["product_id"] == pid2806][0]
         target["mockups"] = ["m1.jpg", "m2.jpg", "m3.jpg"]
         target["hero_image"] = "m1.jpg"
         with open(app_module.DATA_FILE, "w") as f:
             json.dump(sets, f)
         r = client.post(
-            f"/api/sets/{sid}/products/{pid945}/mockups/reorder",
+            f"/api/sets/{sid}/products/{pid2806}/mockups/reorder",
             json={"order": ["m3.jpg", "m1.jpg", "m2.jpg"]})
         check("reorder accepted",
               r.status_code == 200 and
               [p for p in r.get_json()["products"]
-               if p["product_id"] == pid945][0]["mockups"] ==
+               if p["product_id"] == pid2806][0]["mockups"] ==
               ["m3.jpg", "m1.jpg", "m2.jpg"], str(r.status_code))
         check("reorder keeps hero",
               [p for p in r.get_json()["products"]
-               if p["product_id"] == pid945][0]["hero_image"] == "m1.jpg")
+               if p["product_id"] == pid2806][0]["hero_image"] == "m1.jpg")
         r = client.post(
-            f"/api/sets/{sid}/products/{pid945}/mockups/reorder",
+            f"/api/sets/{sid}/products/{pid2806}/mockups/reorder",
             json={"order": ["m1.jpg", "m2.jpg"]})
         check("bad reorder rejected", r.status_code == 400)
 
@@ -233,19 +233,19 @@ def main():
               [l for l in r.get_json()["text_layers"]
                if l["id"] == lid][0]["hidden"] is False)
         r = client.post(
-            f"/api/sets/{sid}/products/{pid945}/layers/{lid}/hide",
+            f"/api/sets/{sid}/products/{pid2806}/layers/{lid}/hide",
             json={"hidden": True})
         check("per-product layer hide",
               r.status_code == 200 and lid in
               [p for p in r.get_json()["products"]
-               if p["product_id"] == pid945][0].get("hidden_layers", []))
+               if p["product_id"] == pid2806][0].get("hidden_layers", []))
         r = client.post(
-            f"/api/sets/{sid}/products/{pid945}/layers/{lid}/hide",
+            f"/api/sets/{sid}/products/{pid2806}/layers/{lid}/hide",
             json={"hidden": False})
         check("per-product layer show",
               lid not in
               [p for p in r.get_json()["products"]
-               if p["product_id"] == pid945][0].get("hidden_layers", []))
+               if p["product_id"] == pid2806][0].get("hidden_layers", []))
 
         print("== 8. Mockups with layers + design hide ==")
         photo = os.path.join(tmp, "photo.jpg")
@@ -255,13 +255,13 @@ def main():
         shutil.copy(photo, os.path.join(app_module.UPLOAD_DIR, "photo.jpg"))
         r = client.post(f"/api/sets/{sid}/mockups", json={
             "design": "/static/uploads/design.png",
-            "photos": {pid945: "/static/uploads/photo.jpg"}})
+            "photos": {pid2806: "/static/uploads/photo.jpg"}})
         check("mockup with layers ok",
-              r.status_code == 200 and pid945 in r.get_json()["mockups"],
+              r.status_code == 200 and pid2806 in r.get_json()["mockups"],
               str(r.get_json()))
         with_layers = os.path.join(
             app_module.MOCKUP_DIR,
-            os.path.basename(r.get_json()["mockups"][pid945]))
+            os.path.basename(r.get_json()["mockups"][pid2806]))
         check("mockup file exists", os.path.exists(with_layers))
         # NOTE: every render writes the same per-product path, so copy
         # this output aside before the next render overwrites it.
@@ -270,14 +270,14 @@ def main():
         with_layers = with_layers_copy
         # Hide the design on this product: output must differ and must
         # still carry the text layer (so it differs from the bare photo).
-        client.post(f"/api/sets/{sid}/products/{pid945}/design-hide",
+        client.post(f"/api/sets/{sid}/products/{pid2806}/design-hide",
                     json={"hidden": True})
         r = client.post(f"/api/sets/{sid}/mockups", json={
             "design": "/static/uploads/design.png",
-            "photos": {pid945: "/static/uploads/photo.jpg"}})
+            "photos": {pid2806: "/static/uploads/photo.jpg"}})
         hidden_out = os.path.join(
             app_module.MOCKUP_DIR,
-            os.path.basename(r.get_json()["mockups"][pid945]))
+            os.path.basename(r.get_json()["mockups"][pid2806]))
         a = Image.open(with_layers).convert("RGB")
         b = Image.open(hidden_out).convert("RGB")
         check("design-hide changes the mockup",
@@ -288,15 +288,15 @@ def main():
                     json={"hidden": True})
         r = client.post(f"/api/sets/{sid}/mockups", json={
             "design": "/static/uploads/design.png",
-            "photos": {pid945: "/static/uploads/photo.jpg"}})
+            "photos": {pid2806: "/static/uploads/photo.jpg"}})
         bare_out = os.path.join(
             app_module.MOCKUP_DIR,
-            os.path.basename(r.get_json()["mockups"][pid945]))
+            os.path.basename(r.get_json()["mockups"][pid2806]))
         c = Image.open(bare_out).convert("RGB")
         orig = Image.open(photo).convert("RGB")
         check("design hidden + layers hidden = bare photo",
               list(c.getdata()) == list(orig.getdata()))
-        client.post(f"/api/sets/{sid}/products/{pid945}/design-hide",
+        client.post(f"/api/sets/{sid}/products/{pid2806}/design-hide",
                     json={"hidden": False})
         client.post(f"/api/sets/{sid}/layers/{lid}/hide",
                     json={"hidden": False})
@@ -311,7 +311,7 @@ def main():
         check("deleted layer PNG removed", not os.path.exists(png))
 
         print("== 9. Publish guards still work (regression) ==")
-        for pid in ("catalog:printify-945", "catalog:printify-48"):
+        for pid in ("catalog:printify-2806", "catalog:printify-48"):
             client.post(f"/api/sets/{sid}/products/{pid}/pricing",
                         json={"sale_price": 10, "base_cost": 12})
         # Section 8 removed the design, so re-upload it first: without

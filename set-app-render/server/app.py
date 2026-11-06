@@ -2233,7 +2233,7 @@ def publish_live(sid):
                          "product. Over the limit: split the set or "
                          "reduce colours/sizes.",
             }), 400
-    else:
+    elif s.get("grouping", "combine") == "split":
         over = [p.get("title") or p["product_id"]
                 for p in s.get("products", [])
                 if publishable[p["product_id"]] > 100]
@@ -2242,6 +2242,10 @@ def publish_live(sid):
                 "error": "Split mode: one listing per product. Over the "
                          "100-variant limit: " + ", ".join(over),
             }), 400
+    # Grouped: no per-product variant check here. build_product_payloads
+    # chunks the combined variant list into listings itself, so a
+    # product with more than 100 variants (the Gildan Long Sleeve has
+    # 117) must not be blocked, and no limit text is shown in this mode.
     payloads = build_product_payloads(s)
     warnings = []
     skipped = [(p.get("title") or p["product_id"],

@@ -90,8 +90,8 @@ for fname in ("hoodie-front.png", "crewneck-front.png",
 check("centreImageUrl prefers design-area template",
       "designAreaTemplateUrl" in js and
       "design-area-templates" in js)
-check("mockup label says design-page template",
-      "design-page template" in js)
+check("mockup label says design-area template",
+      "Design-area template" in js)
 # 4. Phone layout
 check("phone media query at 480px or below",
       "@media (max-width: 480px)" in css)

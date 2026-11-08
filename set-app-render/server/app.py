@@ -24,6 +24,7 @@ from flask import Flask, Response, jsonify, redirect, render_template, request, 
 
 import shopify as shopify_api
 from catalog import get_template
+import product_types as ptypes
 from design_validation import validate_design
 from mockup import effective_placement, render_set_mockups
 from text_layers import composite_layers, render_text_png, validate_layer
@@ -43,6 +44,11 @@ else:
     DATA_FILE = os.path.join(BASE, "data", "sets.json")
     UPLOAD_DIR = os.path.join(BASE, "server", "static", "uploads")
     MOCKUP_DIR = os.path.join(BASE, "server", "static", "mockups")
+
+# Flat garment outlines (design-area templates), served as /static/
+# files. Local product types render their mockups on these.
+TEMPLATE_DIR = os.path.join(BASE, "server", "static",
+                            "design-area-templates")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -427,11 +433,27 @@ def parse_money_decimal(value):
 
 
 def product_variant_count(product):
-    """Selected colours x selected sizes, or None when not recorded."""
+    """Variants this product will actually create on publish, or None.
+
+    The displayed count matches the created count: only pairs with a
+    known price are created. A flat sale price prices every selected
+    pair; otherwise only pairs with a stored per-variant price count
+    (real listings are often non-rectangular: the Oregon tee has 88
+    variants across 12 colours x 8 sizes, not 96, because 8 pairs
+    have no store price). When no price is recorded at all, fall back
+    to the stored variant count from the listing, else the selected
+    grid. None when colours or sizes are missing.
+    """
     colours = product.get("colours") or []
     sizes = product.get("sizes") or []
     if not colours or not sizes:
         return None
+    if (parse_money_decimal(product.get("sale_price")) is not None
+            or product.get("variant_prices")):
+        return priced_pair_count(product)
+    stored = product.get("variants")
+    if isinstance(stored, int) and stored >= 0:
+        return stored
     return len(colours) * len(sizes)
 
 
@@ -762,7 +784,8 @@ def campaign_designer_page(sid):
     if sid not in sets:
         return jsonify({"error": "set not found"}), 404
     return render_template("designer.html",
-                           view=campaign_view(sets[sid]))
+                           view=campaign_view(sets[sid]),
+                           product_types=ptypes.public_types())
 
 
 @app.route("/auth/shopify")
@@ -1172,6 +1195,16 @@ def add_product(sid):
     sizes or prices) that could never be configured or published. Now
     the entry is filled from the live listing; an unknown id, or a
     catalog id sent here by mistake, is rejected and nothing is added.
+
+    Optional body fields (2026-11-07):
+      product_type: a type key from product_types.py, stored on the
+        product so its design-area template never depends on the title.
+        Without it the type is inferred from the Shopify title.
+      link_local: the id of a LOCAL product in this set (for example
+        "local:long-sleeve"). The new store product REPLACES it in the
+        same position: the synced listing wins for title, colours,
+        sizes and prices, while the type, lock state, override
+        placement and Front/Back position carry over.
     """
     body = request.get_json(force=True) or {}
     sets = load_sets()
@@ -1182,13 +1215,29 @@ def add_product(sid):
     if not pid:
         return jsonify({"error": "product_id is required"}), 400
     products = sets[sid]["products"]
-    if any(p["product_id"] == pid for p in products):
-        return jsonify(sets[sid])
     if pid.startswith("catalog:"):
         return jsonify({
             "error": "Catalog templates were removed from the app "
                      "(2026-11-06), so catalog IDs cannot be added."
         }), 400
+    if ptypes.is_local_id(pid):
+        return jsonify({
+            "error": "Local products are added with the product-type "
+                     "buttons, not by ID."
+        }), 400
+    if any(p["product_id"] == pid for p in products):
+        return jsonify(sets[sid])
+    wanted_type = body.get("product_type")
+    if wanted_type not in (None, "") and not ptypes.is_type_key(wanted_type):
+        return jsonify({"error": "Unknown product type."}), 400
+    local = None
+    link_id = body.get("link_local")
+    if link_id not in (None, ""):
+        local = find_product(sets[sid], str(link_id))
+        if local is None or local.get("kind") != "local":
+            return jsonify({
+                "error": "link_local must be a local product in this set."
+            }), 400
     if not shopify_api.authenticated():
         return jsonify({
             "error": "Shopify is not connected. "
@@ -1203,9 +1252,48 @@ def add_product(sid):
             "error": "No Shopify product with that ID was found."
         }), 400
     entry = _entry_from_details(details)
-    products.append(entry)
+    if local is not None:
+        entry = _linked_entry(entry, local)
+    if wanted_type:
+        entry["product_type"] = wanted_type
+    if local is not None:
+        index = next(i for i, p in enumerate(products)
+                     if p["product_id"] == local["product_id"])
+        products[index] = entry
+    else:
+        products.append(entry)
     save_sets(sets)
+    if local is not None:
+        # The local placeholder's renders were drawn on the flat
+        # outline: drop them, and delete files nothing else uses.
+        old = list(local.get("mockups") or [])
+        if (local.get("hero_image") or "").startswith("/static/mockups/"):
+            old.append(local["hero_image"])
+        for url in set(old):
+            _delete_file_if_orphan(sets, url)
     return jsonify(sets[sid])
+
+
+def _linked_entry(fresh, local):
+    """A synced store entry that takes over from a local placeholder.
+
+    Source-of-truth rule: the Shopify listing wins for everything it
+    knows (title, handle, photos, colours, sizes, per-variant prices),
+    and the working price is dropped so the listing's prices apply.
+    What the seller set up in the app carries over: the product type,
+    the lock state and override placement, Front/Back position, and
+    per-product design hiding. Renders made on the flat outline do not
+    carry over (they are stale for a real product photo).
+    """
+    entry = dict(fresh)
+    entry["product_type"] = (local.get("product_type")
+                             or fresh.get("product_type")
+                             or ptypes.DEFAULT_TYPE)
+    for key in ("locked", "override_placement", "position",
+                "hide_design", "hidden_layers"):
+        if key in local:
+            entry[key] = local[key]
+    return entry
 
 
 def _entry_from_details(details):
@@ -1264,6 +1352,12 @@ def _entry_from_details(details):
         "sale_price": None,
         "compare_at_price": None,
         "base_cost": None,
+        # Stored type: the design-area template follows this, not the
+        # title, so a later rename cannot move it. Inferred from the
+        # title once, here, for products added without a type.
+        "product_type": (ptypes.infer_type_key(
+            details.get("title") or details["product_id"])
+            or ptypes.DEFAULT_TYPE),
     }
 
 
@@ -1286,6 +1380,11 @@ def refresh_product(sid, pid):
             "error": "Catalog templates have no Shopify listing to "
                      "refresh from."
         }), 400
+    if p.get("kind") == "local":
+        return jsonify({
+            "error": "This is a local product with no Shopify listing "
+                     "yet. Link it to its Shopify product first."
+        }), 400
     if not shopify_api.authenticated():
         return jsonify({
             "error": "Shopify is not connected. "
@@ -1300,9 +1399,161 @@ def refresh_product(sid, pid):
             "error": "This product no longer exists in Shopify."
         }), 400
     fresh = _entry_from_details(details)
+    # Pin the type from the OLD title before the title is overwritten,
+    # so a rename in Shopify cannot silently change the template of a
+    # product that was added before types existed.
+    if not ptypes.is_type_key(p.get("product_type")):
+        p["product_type"] = (ptypes.resolve_type_key(p)
+                             or ptypes.DEFAULT_TYPE)
     for key in ("title", "handle", "url", "image", "images",
                 "all_colours", "all_sizes", "variant_prices", "variants"):
         p[key] = fresh[key]
+    save_sets(sets)
+    return jsonify(sets[sid])
+
+
+def _title_taken(set_obj, title, except_pid=None):
+    """True when another product in the set already has this title.
+
+    Titles become the Style option of a grouped or combined listing,
+    so two products with the same title would create duplicate
+    variants that Shopify rejects. Compared case-insensitively.
+    """
+    wanted = " ".join(str(title).split()).lower()
+    for p in set_obj.get("products", []):
+        if p["product_id"] == except_pid:
+            continue
+        have = " ".join(str(p.get("title") or "").split()).lower()
+        if have == wanted:
+            return True
+    return False
+
+
+def _clear_renders(p):
+    """Forget a product's rendered mockups; returns the old URLs."""
+    old = list(p.get("mockups") or [])
+    if (p.get("hero_image") or "").startswith("/static/mockups/"):
+        old.append(p["hero_image"])
+        p["hero_image"] = None
+    p["mockups"] = []
+    p["mockup_versions"] = {}
+    p["mockup_version"] = None
+    return old
+
+
+@app.route("/api/product-types", methods=["GET"])
+def list_product_types():
+    """The locally defined product types (no supplier, no catalogue)."""
+    return jsonify(ptypes.public_types())
+
+
+@app.route("/api/sets/<sid>/local-products", methods=["POST"])
+def add_local_product(sid):
+    """Add one of the new types as a LOCAL product, before its real
+    Shopify listing exists.
+
+    Body: {"type": "long-sleeve" | "classic-long-sleeve" | "v-neck"}.
+    The entry starts from the type's working title, colours, sizes and
+    price, is locked (follows the master placement) and designs on the
+    type's flat outline. A real publish is blocked until it is linked
+    to its Shopify listing. One local product per type per set.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    key = body.get("type")
+    if not (isinstance(key, str) and key in ptypes.NEW_TYPE_KEYS):
+        return jsonify({
+            "error": "Choose one of: " + ", ".join(ptypes.NEW_TYPE_KEYS)
+        }), 400
+    pid = ptypes.local_product_id(key)
+    if find_product(sets[sid], pid) is not None:
+        return jsonify({
+            "error": "That product type is already in this set."
+        }), 400
+    try:
+        entry = ptypes.local_entry(key)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if _title_taken(sets[sid], entry["title"]):
+        return jsonify({
+            "error": "A product in this set already has the title "
+                     "'%s'. Rename it first." % entry["title"]
+        }), 400
+    sets[sid]["products"].append(entry)
+    save_sets(sets)
+    return jsonify(sets[sid]), 201
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/type", methods=["POST"])
+def set_product_type(sid, pid):
+    """Set (or clear) a product's stored type.
+
+    The design-area template follows the stored type. Clearing it
+    (type null) falls back to the title keywords. A LOCAL product's
+    renders were drawn on the old outline, so they are cleared when its
+    template changes; store products render on their own photo, so
+    nothing is cleared for them.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    key = body.get("type")
+    if key not in (None, "") and not ptypes.is_type_key(key):
+        return jsonify({"error": "Unknown product type."}), 400
+    before = ptypes.template_url(p, "front")
+    if key in (None, ""):
+        p.pop("product_type", None)
+    else:
+        p["product_type"] = key
+    old = []
+    if p.get("kind") == "local" \
+            and ptypes.template_url(p, "front") != before:
+        old = _clear_renders(p)
+    save_sets(sets)
+    for url in set(old):
+        _delete_file_if_orphan(sets, url)
+    return jsonify(sets[sid])
+
+
+@app.route("/api/sets/<sid>/products/<path:pid>/title", methods=["POST"])
+def rename_local_product(sid, pid):
+    """Rename a LOCAL product (Ovi chooses the final titles).
+
+    Store products keep the title Shopify has: rename them in Shopify,
+    then tap Refresh. Titles must be unique inside the set because the
+    title is the Style option of a grouped or combined listing. The
+    template does not change: it follows the stored type.
+    """
+    body = request.get_json(force=True) or {}
+    sets = load_sets()
+    if sid not in sets:
+        return jsonify({"error": "set not found"}), 404
+    p = find_product(sets[sid], pid)
+    if p is None:
+        return jsonify({"error": "product not in set"}), 404
+    if p.get("kind") != "local":
+        return jsonify({
+            "error": "The title of a Shopify product comes from Shopify. "
+                     "Rename it there, then tap Refresh."
+        }), 400
+    title = " ".join(str(body.get("title") or "").split())
+    if not title:
+        return jsonify({"error": "Type a title first."}), 400
+    if len(title) > 255:
+        return jsonify({
+            "error": "Title must be 255 characters or fewer."}), 400
+    if _title_taken(sets[sid], title, except_pid=pid):
+        return jsonify({
+            "error": "Another product in this set already has that "
+                     "title. Titles must be different."
+        }), 400
+    p["title"] = title
     save_sets(sets)
     return jsonify(sets[sid])
 
@@ -2142,7 +2393,10 @@ def publish_checklist(set_obj, payloads):
             "variants": variants,
             "skipped_pairs": skipped_pair_count(p),
             "images": images,
+            "kind": p.get("kind", "store"),
+            "linked": p.get("kind") != "local",
             "ready": bool(set_obj.get("design_url")
+                          and p.get("kind") != "local"
                           and mockup_is_current(set_obj, p)
                           and p.get("colours") and p.get("sizes")
                           and (sale is not None or prices)),
@@ -2191,6 +2445,20 @@ def publish_live(sid):
             "error": "Some products are missing details.",
             "products": missing,
         }), 400
+    local_products = [p for p in s.get("products", [])
+                      if p.get("kind") == "local"]
+    if local_products and not dry_run:
+        return jsonify({
+            "error": "Link these products to their Shopify listings "
+                     "before publishing for real: "
+                     + ", ".join(p.get("title") or p["product_id"]
+                                 for p in local_products)
+                     + ". Their mockups use a flat garment outline, "
+                       "not a product photo.",
+            "products": [{"product_id": p["product_id"],
+                          "title": p.get("title") or p["product_id"]}
+                         for p in local_products],
+        }), 400
     summary = variant_summary(s)
     # The variant-limit guard counts variants that will actually be
     # created (priced pairs), not selected pairs: a non-rectangular
@@ -2221,6 +2489,14 @@ def publish_live(sid):
     # 117) must not be blocked, and no limit text is shown in this mode.
     payloads = build_product_payloads(s)
     warnings = []
+    if local_products:
+        warnings.append(
+            "Not linked to a Shopify listing yet (a real publish is "
+            "blocked until they are): "
+            + ", ".join(p.get("title") or p["product_id"]
+                        for p in local_products)
+            + ". Their mockups use the flat garment outline, not a "
+              "product photo.")
     skipped = [(p.get("title") or p["product_id"],
                 skipped_pair_count(p))
                for p in s.get("products", [])
@@ -2507,6 +2783,13 @@ def product_photo(sid, pid):
             return jsonify({"photo": url, "source": "product"})
     if p.get("image"):
         return jsonify({"photo": p["image"], "source": "product"})
+    if p.get("kind") == "local":
+        # No Shopify listing yet: design on the type's flat outline.
+        url = ptypes.template_url(p, "front")
+        if url:
+            return jsonify({"photo": url, "source": "template"})
+        return jsonify({"photo": None,
+                        "error": "no template for this product type"}), 200
     template = get_template(pid)
     if template and template.get("images"):
         return jsonify({"photo": template["images"][0],
@@ -2536,6 +2819,8 @@ def bare_photo_for_product(set_obj, product):
             return url
     if product.get("image"):
         return product["image"]
+    if product.get("kind") == "local":
+        return ptypes.template_url(product, "front") or None
     template = get_template(product["product_id"])
     if template and template.get("images"):
         return template["images"][0]
@@ -2639,6 +2924,11 @@ def make_mockups(sid):
     def static_local(path):
         """Map a server-issued /static/ URL to its configured dir."""
         name = os.path.basename(path)
+        if "/design-area-templates/" in path:
+            # Only the known outline files, never an arbitrary path.
+            if name in ptypes.template_filenames():
+                return os.path.join(TEMPLATE_DIR, name)
+            return None
         if "/uploads/" in path:
             return os.path.join(UPLOAD_DIR, name)
         if "/mockups/" in path:
@@ -2702,7 +2992,9 @@ def make_mockups(sid):
             digest = _mockup_hash(
                 None if p.get("hide_design") else design_path,
                 placement, layers)
-            out = os.path.join(MOCKUP_DIR, f"{sid}_{pid}_{digest}.jpg")
+            safe_pid = re.sub(r"[^A-Za-z0-9_-]", "_", pid)
+            out = os.path.join(MOCKUP_DIR,
+                               f"{sid}_{safe_pid}_{digest}.jpg")
             design = None if p.get("hide_design") else design_path
             composite_layers(photo, design, placement, layers, out)
             url = "/static/mockups/" + os.path.basename(out)

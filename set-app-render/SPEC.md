@@ -218,3 +218,65 @@ in server/static/app.css and app.js. Publish is DIRECT: route
 immediately with no draft review step; preview (dry run) is the
 only safe check. No live profit anywhere. See
 gearlaunch-pages-plan.md and gearlaunch-pages-test-log.md.
+
+## Three new product types, defined locally (2026-11-07, local only, NOT deployed)
+
+Long Sleeve Tee (Gildan 80), Classic Long Sleeve (Gildan Softstyle 64400)
+and V-Neck Tee (Bella+Canvas 48) are added so Srity can design the Oregon
+badge on them and add them to the Oregon Ducks Set. They come from Cat Kiss
+Fish, which Ovi creates in Shopify himself; the app has no supplier
+connection of any kind, and no Printify code exists (Ovi, 2026-11-06 17:14).
+`server/catalog.py` stays an empty stub.
+
+- **Local definitions:** `server/product_types.py` holds every type: name,
+  legacy title keywords, design-area template file, and for the three new
+  types the starting title, colours, sizes and working price. Long Sleeve:
+  11 colours x 8 sizes (S-5XL) = 88, $27. Classic: 5 colours x 6 sizes
+  (S-3XL) = 30, $29. V-Neck: 4 colours, $29, **sizes NOT decided** (none
+  selected; the pool offered is S-3XL; set them by ticking sizes on the
+  card or with the `SETAPP_VNECK_SIZES` env var, e.g. `S,M,L,XL,2XL`).
+  Titles are placeholders ("Oregon Ducks Long Sleeve Tee", "... Classic
+  Long Sleeve Tee", "... V-Neck Tee"). Default colour is Black (a working
+  default, editable). Clogs are not a type.
+- **Template resolution:** stored `product_type` first (rename-proof), then
+  the old title keywords (fallback for products added before types existed),
+  then the short-sleeve tee outline. The Classic uses `longsleeve-front.png`
+  (open decision: its own outline?). The type table is embedded in the
+  designer page (`window.PRODUCT_TYPES`) and served at `GET
+  /api/product-types`, so the frontend keeps no second copy.
+- **Local products:** `POST /api/sets/<id>/local-products {"type": ...}`
+  adds a working product (`kind` "local", id `local:<type>`, locked, follows
+  the master placement). It designs and renders on the type's flat outline
+  (the only outline files the render accepts are the known template names).
+  `POST .../products/<pid>/title` renames a local product (unique within the
+  set; Shopify products keep Shopify's title). `POST
+  .../products/<pid>/type` sets or clears the stored type; changing a local
+  product's outline clears its now-wrong renders.
+- **Which source wins:** once the real listing exists, add its Shopify ID
+  with "link to" chosen in the picker (`POST .../products` with
+  `link_local`). The listing REPLACES the local entry in place and wins for
+  title, colours, sizes and per-variant prices; the working price is dropped
+  so the listing's prices apply. Type, lock, override placement and
+  Front/Back carry over; renders made on the outline are cleared. Refresh
+  never changes the type; for a product added before types existed it pins
+  the type from the old title first, so a Shopify rename cannot move its
+  template. A plain add stores the type inferred from the title.
+- **Publish safety:** a real publish is blocked while any local product is
+  unlinked (it would put outline mockups live). The dry run still works and
+  warns, and marks those rows "Not ready". A V-neck with no sizes blocks the
+  dry run until sizes are set ("missing sizes").
+- **Variant counts for the 6-product set:** grouped chunks hold 95 or fewer
+  variants; created variants = 184 + 88 + 30 + 4 x (V-neck sizes) = 322 with
+  5 sizes (4 listings) or 326 with 6 (4 listings). The variant-count
+  endpoint reports SELECTED pairs (the tee is 12 x 8 = 96 selected, 88 real),
+  so it shows 330 / 334 (existing behaviour, unchanged); the dry run's
+  chunks and the `skipped` warning give the true created count. Combine mode
+  still refuses the full set (over 100); split mode fits (each product <=100).
+- **Garment outline PNGs:** hoodie, crewneck, long sleeve and v-neck carried
+  faint leftover dash pixels of the old baked-in box (a 5-8 level grey
+  difference on a flat fill, invisible on most screens), which failed the
+  existing guard (`expansion_types_test.py`, 4 checks). They were replaced by
+  the surrounding fill; no outline or alpha pixel changed.
+- Tests: `server/new_types_test.py` (450 checks), existing
+  `server/expansion_types_test.py` (67 checks, file unchanged), optional
+  `server/new_types_phone_check.py` (26 checks, needs playwright).

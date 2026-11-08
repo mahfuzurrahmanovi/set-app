@@ -121,12 +121,14 @@ document.addEventListener('input', function(e) {
   const t = e.target;
   if (!t || !t.id) return;
   if (['productSearch', 'setName', 'loginPassword', 'productId'].indexOf(t.id) !== -1) return;
+  if (t.id.indexOf('ptitle-') === 0 || t.id.indexOf('ptype-') === 0 || t.id === 'linkLocalSelect') return;
   if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') markDirty();
 });
 document.addEventListener('change', function(e) {
   const t = e.target;
   if (!t || !t.id) return;
   if (['productSearch', 'setName', 'loginPassword', 'productId'].indexOf(t.id) !== -1) return;
+  if (t.id.indexOf('ptitle-') === 0 || t.id.indexOf('ptype-') === 0 || t.id === 'linkLocalSelect') return;
   if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA') markDirty();
 });
 async function checkAuth() {
@@ -420,8 +422,19 @@ function selectedProduct() {
   const found = currentSet.products.filter(function(p) { return p.product_id === selectedPid; })[0];
   return found || currentSet.products[0] || null;
 }
+function typePlacementOf(p) {
+  // A product type's own placement (V-neck only: the master would put
+  // a square badge over its V opening). Mirrors the server's
+  // mockup.type_placement_for. Returns null when the type defines none.
+  const types = window.PRODUCT_TYPES || {};
+  const k = (p && p.product_type && types[p.product_type]) ? p.product_type : '';
+  const t = k ? types[k] : null;
+  return (t && t.placement) ? t.placement : null;
+}
 function effectivePlacementOf(p) {
   if (p && !p.locked && p.override_placement) return p.override_placement;
+  const tp = typePlacementOf(p);
+  if (tp) return tp;
   return (currentSet && currentSet.master_placement) || { x: 0.5, y: 0.45, scale: 0.5, angle: 0 };
 }
 function selectSet(id) {
@@ -599,7 +612,7 @@ function swatchHex(name) {
   return COLOR_HEX[key] || '#cccccc';
 }
 function productThumb(p) {
-  const url = (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || '';
+  const url = (p.mockups && p.mockups[0]) || p.hero_image || (p.images && p.images[0]) || p.image || designAreaTemplateUrl(p, 'front') || '';
   if (!url) return '<span class="thumb" style="display:inline-block"></span>';
   return '<img class="thumb" src="' + esc(url) + '" alt="">';
 }
@@ -628,14 +641,15 @@ function mockupIsCurrent(p) {
 function renderProducts() {
   const box = document.getElementById('products');
   if (!box) return;
-  if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; return; }
-  if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one below.</small>'; return; }
+  if (!currentSet) { box.innerHTML = '<small>No set selected yet. Create a set first.</small>'; renderLocalTypeControls(); return; }
+  if (!currentSet.products.length) { box.innerHTML = '<small>No products in this set yet. Add one below.</small>'; renderLocalTypeControls(); return; }
   box.innerHTML = currentSet.products.map(function(p) {
     const sid = safeId(p.product_id);
     const isSel = selectedPid === p.product_id || (!selectedPid && currentSet.products[0] === p);
     const action = p.locked ? 'Unlock' : 'Lock';
     const title = esc(p.title || p.product_id);
-    const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>' : '';
+    const badge = p.kind === 'catalog' ? ' <span class="badge">Catalog template, not a store product yet</span>'
+      : (p.kind === 'local' ? ' <span class="badge">Working product: not linked to Shopify yet</span>' : '');
     const vc = variantCountOf(p);
     const range = priceRangeOf(p);
     let priceLine;
@@ -689,7 +703,16 @@ function renderProducts() {
       const sel = (p.default_color || p.colours[0]) === c ? ' selected' : '';
       return '<option value="' + esc(c) + '"' + sel + '>' + esc(c) + '</option>';
     }).join('');
-    const refreshBtn = p.kind === 'catalog' ? '' : '<button class="secondary" onclick="refreshProduct(\'' + esc(p.product_id) + '\')">Refresh from Shopify</button>';
+    const refreshBtn = p.kind === 'catalog' ? ''
+      : (p.kind === 'local' ? '<p><small>Not linked to Shopify yet. Create the product in Shopify, then link it under Add products.</small></p>'
+        : '<button class="secondary" onclick="refreshProduct(\'' + esc(p.product_id) + '\')">Refresh from Shopify</button>');
+    const typeBlock = '<details onclick="event.stopPropagation()"><summary>Garment type' + (productTypeName(p) ? ': ' + esc(productTypeName(p)) : '') + '</summary>'
+      + '<label>Garment type (picks the outline the design sits on)</label><select id="ptype-' + sid + '" onchange="saveProductType(\'' + esc(p.product_id) + '\')">' + productTypeOptions(p) + '</select>'
+      + (p.kind === 'local'
+        ? '<label>Product title (you can rename it)</label><input id="ptitle-' + sid + '" value="' + esc(p.title || '') + '">'
+          + '<button class="secondary" onclick="renameLocalProduct(\'' + esc(p.product_id) + '\')">Save title</button>'
+        : '<p><small>The title comes from Shopify. Rename it there, then tap Refresh.</small></p>')
+      + '</details>';
     let placementBlock = '';
     if (!p.locked) {
       const pl = p.override_placement || effectivePlacementOf(p);
@@ -713,6 +736,7 @@ function renderProducts() {
       + '<button class="secondary" onclick="previewMockup(\'' + esc(p.product_id) + '\')">Preview mockup</button></div>'
       + '<div id="preview-' + sid + '"></div>'
       + placementBlock
+      + typeBlock
       + '<div onclick="event.stopPropagation()"><button class="secondary" onclick="openPickColors(\'' + esc(p.product_id) + '\')">Pick colors</button></div>'
       + '<details onclick="event.stopPropagation()"><summary>Sizes + price</summary>'
       + '<p><small>Sizes (tick to include):</small></p><div class="chips">' + sizeChips + '</div>'
@@ -727,6 +751,98 @@ function renderProducts() {
       + reorderBlock
       + '</div>';
   }).join('');
+  renderLocalTypeControls();
+}
+// ---- Local product types (2026-11-07). The type table comes from the
+// server (window.PRODUCT_TYPES, embedded in the designer page), so the
+// frontend holds no second copy of the sizes, colours or templates.
+function productTypeKey(p) {
+  const types = window.PRODUCT_TYPES || {};
+  return (p && p.product_type && types[p.product_type]) ? p.product_type : '';
+}
+function productTypeName(p) {
+  const k = productTypeKey(p);
+  return k ? window.PRODUCT_TYPES[k].name : '';
+}
+function productTypeOptions(p) {
+  const types = window.PRODUCT_TYPES || {};
+  const order = window.PRODUCT_TYPE_ORDER || Object.keys(types);
+  const cur = productTypeKey(p);
+  let html = '<option value=""' + (cur ? '' : ' selected') + '>Auto (from the title)</option>';
+  order.forEach(function(k) {
+    if (!types[k]) return;
+    html += '<option value="' + esc(k) + '"' + (cur === k ? ' selected' : '') + '>' + esc(types[k].name) + '</option>';
+  });
+  return html;
+}
+function renderLocalTypeControls() {
+  const box = document.getElementById('localTypeButtons');
+  const types = window.PRODUCT_TYPES || {};
+  const keys = window.NEW_PRODUCT_TYPES || [];
+  if (box) {
+    if (!currentSet) {
+      box.innerHTML = '<small>Open a set first.</small>';
+    } else {
+      box.innerHTML = keys.map(function(k) {
+        const t = types[k];
+        if (!t) return '';
+        const st = t.starter || {};
+        const inSet = currentSet.products.some(function(p) { return p.product_id === 'local:' + k; });
+        const sizes = (st.sizes && st.sizes.length) ? st.sizes.length + ' sizes' : 'sizes not decided yet';
+        const line = esc(t.name) + (t.garment ? ' (' + esc(t.garment) + ')' : '') + ': ' + (st.colours || []).length + ' colours, ' + sizes + ', $' + esc(st.price || '');
+        return '<div style="margin-top:10px"><small>' + line + '</small>'
+          + '<button class="secondary" ' + (inSet ? 'disabled' : 'onclick="addLocalProduct(\'' + esc(k) + '\')"') + '>' + (inSet ? 'In set: ' : 'Add ') + esc(t.name) + '</button></div>';
+      }).join('');
+    }
+  }
+  const sel = document.getElementById('linkLocalSelect');
+  if (sel) {
+    const keep = sel.value;
+    const locals = currentSet ? currentSet.products.filter(function(p) { return p.kind === 'local'; }) : [];
+    sel.innerHTML = '<option value="">No, add it as a new product</option>' + locals.map(function(p) {
+      return '<option value="' + esc(p.product_id) + '">Link to: ' + esc(p.title || p.product_id) + '</option>';
+    }).join('');
+    if (keep && locals.some(function(p) { return p.product_id === keep; })) sel.value = keep;
+    const wrap = document.getElementById('linkLocalWrap');
+    if (wrap) wrap.style.display = locals.length ? 'block' : 'none';
+  }
+}
+function linkLocalValue() {
+  const sel = document.getElementById('linkLocalSelect');
+  return sel ? sel.value : '';
+}
+async function addLocalProduct(key) {
+  if (!currentSet) return alert('Create a set first.');
+  try {
+    const j = await postSet('/local-products', { type: key });
+    refreshAfterSet(j);
+    selectedPid = 'local:' + key;
+    renderProducts();
+    renderCentreMockup();
+  } catch (e) { alert(e.message); }
+}
+async function saveProductType(pid) {
+  if (!currentSet) return;
+  const el = document.getElementById('ptype-' + safeId(pid));
+  if (!el) return;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/type', { type: el.value || null });
+    refreshAfterSet(j);
+    selectedPid = pid;
+    renderProducts();
+    renderCentreMockup();
+  } catch (e) { alert(e.message); }
+}
+async function renameLocalProduct(pid) {
+  if (!currentSet) return;
+  const el = document.getElementById('ptitle-' + safeId(pid));
+  if (!el) return;
+  try {
+    const j = await postSet('/products/' + encodeURIComponent(pid) + '/title', { title: el.value });
+    refreshAfterSet(j);
+    selectedPid = pid;
+    renderProducts();
+  } catch (e) { alert(e.message); }
 }
 async function postSet(path, body) {
   const r = await fetch('/api/sets/' + currentSet.id + path, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {}) });
@@ -1137,10 +1253,21 @@ function setViewSide(side) {
   renderCentreMockup();
 }
 
-function designAreaTemplateUrl(title, side) {
-  // Printify design-page style: flat outline, dashed print area, no
-  // model, no photo, no pre-printed design. This is the designer base
-  // Ovi asked for (2026-11-04), not a Shopify rendered photo.
+function designAreaTemplateUrl(target, side) {
+  // Flat garment outline the design sits on (no model, no photo, no
+  // pre-printed design). Resolution order: 1) the product's stored
+  // type, so renaming a product cannot move its template; 2) the old
+  // title keywords, kept as the fallback for products added before
+  // types existed (the Oregon tee, hoodie and crewneck); 3) the
+  // short-sleeve tee outline. Accepts a product or, for the old call
+  // style, a bare title string.
+  const product = (target && typeof target === 'object') ? target : null;
+  const title = product ? product.title : target;
+  const types = window.PRODUCT_TYPES || null;
+  if (product && product.product_type && types && types[product.product_type]) {
+    const t = types[product.product_type];
+    return (side === 'back' ? t.template_back_url : t.template_front_url) || '';
+  }
   if (!title) return '';
   const s = String(title).toLowerCase();
   if (side === 'back') {
@@ -1161,10 +1288,10 @@ function centreImageUrl(p) {
   // mockup: one already has a design printed on it, so using it
   // stacks a new design on the old one.
   if (!p) return '';
-  const designArea = designAreaTemplateUrl(p.title, viewSide);
+  const designArea = designAreaTemplateUrl(p, viewSide);
   if (designArea) {
     p._designArea = true;
-    p._flatTemplate = { title: p.title, brand: 'Printify design-page' };
+    p._flatTemplate = { title: p.title, brand: productTypeName(p) };
     return designArea;
   }
   p._designArea = false;
@@ -1190,7 +1317,7 @@ function centreImageUrl(p) {
 }
 function mockupSourceLabel(p) {
   if (!p) return '';
-  if (p._designArea) return 'Printify design-page template (flat outline, dashed print area)';
+  if (p._designArea) return 'Design-area template' + (productTypeName(p) ? ': ' + esc(productTypeName(p)) : '') + ' (flat outline, dashed print area)';
   if (p._printifyExact) return 'Printify photo (exact product photo)';
   if (p._flatTemplate) return 'Printify flat product photo' + (p._flatTemplate.brand ? ' (' + esc(p._flatTemplate.brand) + ')' : '');
   return 'Not a Printify flat photo: bare store photo';
@@ -1547,7 +1674,9 @@ async function addProduct() {
   if (!currentSet) return alert('Create a set first.');
   const pid = document.getElementById('productId').value.trim();
   if (!pid) return alert('Type a product ID first.');
-  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ product_id: pid }) });
+  const addBody = { product_id: pid };
+  if (linkLocalValue()) addBody.link_local = linkLocalValue();
+  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(addBody) });
   if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
   currentSet = await r.json();
   document.getElementById('productId').value = '';
@@ -1631,7 +1760,9 @@ async function searchProducts() {
 }
 async function addSearchedProduct(pid) {
   if (!currentSet) return alert('Create a set first.');
-  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ product_id: pid }) });
+  const addBody = { product_id: pid };
+  if (linkLocalValue()) addBody.link_local = linkLocalValue();
+  const r = await fetch('/api/sets/' + currentSet.id + '/products', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(addBody) });
   if (!r.ok) { const j = await r.json().catch(function(){ return {}; }); return alert(j.error || 'Could not add product.'); }
   currentSet = await r.json();
   syncCache();

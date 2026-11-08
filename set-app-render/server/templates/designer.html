@@ -112,7 +112,16 @@
 
 <div class="card" id="pickerCard">
   <h2>Add products</h2>
+  <h3>New product types</h3>
+  <p><small>Design on a new garment before its Shopify product exists. These are working products: you can rename them, and a real publish stays blocked until each one is linked to its Shopify product below.</small></p>
+  <div id="localTypeButtons"><small>Open a set first.</small></div>
+  <h3>Shopify products</h3>
   <p><small>Search the store, or add by product ID. Members already in the set show "In set".</small></p>
+  <div id="linkLocalWrap" style="display:none">
+    <label>Is this the real product for a working product above?</label>
+    <select id="linkLocalSelect"><option value="">No, add it as a new product</option></select>
+    <p><small>If you pick one, the Shopify product takes its place and its title, colours, sizes and prices come from Shopify. Its garment type, lock and placement stay.</small></p>
+  </div>
   <label>Search products</label>
   <input id="productSearch" placeholder="Search by name, e.g. Oregon hoodie" oninput="debouncedSearch()">
   <label>Sort results</label>
@@ -140,6 +149,11 @@
 </div>
 
 
+<script>
+window.PRODUCT_TYPES = {{ product_types.types|tojson }};
+window.PRODUCT_TYPE_ORDER = {{ product_types.order|tojson }};
+window.NEW_PRODUCT_TYPES = {{ product_types.new_types|tojson }};
+</script>
 <script src="/static/app.js"></script>
 <script>
 checkAuth();

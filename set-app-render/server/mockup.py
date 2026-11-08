@@ -12,6 +12,12 @@ A set has one master_placement. A product follows the master unless it is
 unlocked, in which case its override_placement wins. Re-locking returns it
 to the master. This is the "fix the first, fix the rest" rule, with a
 per-product escape hatch.
+
+One exception: a product whose type defines its own placement (the
+V-neck, whose type placement sits lower so a square badge clears the
+V opening the master would overlap) follows that type placement
+while locked, not the master. An unlocked product's own override
+always wins over the type placement too.
 """
 
 from PIL import Image
@@ -75,13 +81,35 @@ def clamp_to_print_area(placement):
 
 def effective_placement(set_obj, product_id):
     """Placement a product actually renders with: override if unlocked,
-    always clamped to the fixed print area."""
+    the product type's own placement if it defines one (V-neck only),
+    else the master. Always clamped to the fixed print area."""
     for p in set_obj.get("products", []):
         if p.get("product_id") == product_id:
             if not p.get("locked", True) and p.get("override_placement"):
                 return clamp_to_print_area(p["override_placement"])
+            tp = type_placement_for(p)
+            if tp is not None:
+                return clamp_to_print_area(tp)
             return clamp_to_print_area(set_obj["master_placement"])
     return clamp_to_print_area(set_obj["master_placement"])
+
+
+def type_placement_for(product):
+    """A product's type placement (V-neck only), or None.
+
+    Resolves the product's type (stored type first, else title
+    keywords) and returns a copy of that type's placement, if it
+    defines one. Never raises; a missing or broken type table means
+    the caller falls back to the master.
+    """
+    try:
+        import product_types as ptypes
+    except ImportError:
+        return None
+    try:
+        return ptypes.type_placement(ptypes.resolve_type_key(product or {}))
+    except Exception:
+        return None
 
 
 def render_set_mockups(set_obj, design_path, photo_by_product, out_dir):
